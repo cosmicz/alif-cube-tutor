@@ -73,6 +73,10 @@ static uint32_t cube_button_request(uint32_t now_ms)
 /* Full-panel preview uses LVGL RGB888 (B,G,R byte order). */
 static uint8_t preview_image[CAMERA_PREVIEW_WIDTH * CAMERA_PREVIEW_HEIGHT * RGB_BYTES]
     __attribute__((aligned(32), section(".bss.large_ram")));
+/* The validated reader expects a 240x240 BGR guide.  This tile is private so
+ * the clean RGB model input and visible preview cannot be modified by it. */
+static uint8_t cube_face_roi_tile[240 * 240 * RGB_BYTES]
+    __attribute__((aligned(32), section(".bss.large_ram")));
 
 
 #if !defined(RTE_Drivers_CPI)
@@ -292,30 +296,51 @@ void camera_update_preview(const uint8_t* image,
             *dst++               = (red << 3) | (red >> 2);
         }
     }
-    uint32_t white_success_before = cube_read_diagnostics.white_success_count;
-    uint32_t now_ms = Get_SysTick_Count();
-    cube_preview_read_and_draw(preview_image, CAMERA_PREVIEW_WIDTH,
-                               CAMERA_PREVIEW_HEIGHT, cube_face_letters,
-                               &cube_read_diagnostics, now_ms, cube_button_request(now_ms));
-    if (white_success_before != cube_read_diagnostics.white_success_count) {
-        printf("WHITE LOCKED %.2f %.2f %.2f\n", (double)cube_read_diagnostics.white_ref[0],
-               (double)cube_read_diagnostics.white_ref[1], (double)cube_read_diagnostics.white_ref[2]);
-        printf("LOGO %.2f %.2f %.2f\n", (double)cube_read_diagnostics.logo_ref_rgb[0],
-               (double)cube_read_diagnostics.logo_ref_rgb[1], (double)cube_read_diagnostics.logo_ref_rgb[2]);
-    }
-    printf("CUBE raw=%s balanced=%s\n", cube_read_diagnostics.raw_letters,
-           cube_read_diagnostics.balanced_letters);
-    if (cube_read_diagnostics.abstain_count >= 5) printf("NO CUBE\n");
-    for (unsigned cell = 0; cell < 9; ++cell) {
-        printf("HSV %u %.2f %.3f %.3f std=%.2f hue_distance=%.2f\n", cell,
-               (double)cube_read_diagnostics.hsv[cell][0],
-               (double)cube_read_diagnostics.hsv[cell][1],
-               (double)cube_read_diagnostics.hsv[cell][2],
-               (double)cube_read_diagnostics.stddev[cell],
-               (double)cube_read_diagnostics.hue_distance[cell]);
+    /* Keep the accepted any-button/calibration state machine alive.  CAL
+     * retains its fixed white-cross guide.  READ defers colour sampling to the
+     * decoded detector ROI below, rather than claiming this centre guide is a
+     * face ROI. */
+    const uint32_t now_ms = Get_SysTick_Count();
+    const uint32_t request = cube_button_request(now_ms);
+    if (!cube_read_diagnostics.mode || request) {
+        cube_preview_read_and_draw(preview_image, CAMERA_PREVIEW_WIDTH,
+                                   CAMERA_PREVIEW_HEIGHT, cube_face_letters,
+                                   &cube_read_diagnostics, now_ms, request);
     }
     /* Keep the full-panel source coherent for the display/DAVE2D reader. */
     SCB_CleanDCache_by_Addr((uint32_t*)preview_image, sizeof preview_image);
+}
+
+const char* hal_camera_cube_status(void)
+{
+    return cube_calibration_status();
+}
+
+bool hal_camera_cube_read_selected_roi(const uint8_t* rgb, uint32_t frame_width,
+                                       uint32_t frame_height, int32_t x0,
+                                       int32_t y0, int32_t width, int32_t height,
+                                       char letters[10])
+{
+    memset(letters, 0, 10);
+    if (!rgb || !cube_read_diagnostics.mode ||
+        !cube_roi_is_valid(frame_width, frame_height, x0, y0, width, height)) {
+        return false;
+    }
+    /* Map only the selected 192px-model ROI into the existing 240px reader.
+     * RGB model input becomes BGR because cube_preview samples LVGL order. */
+    for (uint32_t y = 0; y < 240; ++y) {
+        for (uint32_t x = 0; x < 240; ++x) {
+            const uint8_t* source = rgb + cube_roi_source_index(
+                frame_width, x0, y0, width, height, x, y) * RGB_BYTES;
+            uint8_t* destination = cube_face_roi_tile + (y * 240 + x) * RGB_BYTES;
+            destination[0] = source[2];
+            destination[1] = source[1];
+            destination[2] = source[0];
+        }
+    }
+    cube_preview_read_and_draw(cube_face_roi_tile, 240, 240, letters,
+                               &cube_read_diagnostics, Get_SysTick_Count(), 0);
+    return true;
 }
 
 const uint8_t* hal_camera_get_captured_frame(uint32_t* size)

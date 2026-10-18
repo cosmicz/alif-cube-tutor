@@ -57,14 +57,10 @@
 #define PREVIEW_X CUBE_PREVIEW_WIDTH
 #define PREVIEW_Y CUBE_PREVIEW_HEIGHT
 
-extern "C" const char *cube_calibration_status(void);
-extern "C" int cube_center_is_logo(void);
-
 namespace {
 lv_style_t boxStyle;
 bool firstCameraFrameReported = false;
 lv_obj_t *cubeStatusLabel = nullptr;
-lv_obj_t *cubeLogoLabel = nullptr;
 };
 
 using arm::app::Profiler;
@@ -128,14 +124,7 @@ using namespace arm::app::object_detection;
         lv_obj_set_style_text_align(cubeStatusLabel, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_width(cubeStatusLabel, PREVIEW_X);
         lv_obj_set_pos(cubeStatusLabel, 0, CUBE_STATUS_Y);
-        lv_label_set_text(cubeStatusLabel, cube_calibration_status());
-        cubeLogoLabel = lv_label_create(lv_layer_top());
-        lv_label_set_text(cubeLogoLabel, "logo");
-        lv_obj_set_style_text_color(cubeLogoLabel, lv_color_hex(0xFFFFFF), 0);
-        lv_obj_set_style_bg_color(cubeLogoLabel, lv_color_hex(0x000000), 0);
-        lv_obj_set_style_bg_opa(cubeLogoLabel, LV_OPA_COVER, 0);
-        lv_obj_set_pos(cubeLogoLabel, PREVIEW_X / 2 - 16, PREVIEW_Y / 2 - 10);
-        lv_obj_add_flag(cubeLogoLabel, LV_OBJ_FLAG_HIDDEN);
+        lv_label_set_text(cubeStatusLabel, "CPU RAW: waiting for face");
         lv_port_unlock(lv_lock_state);
 
         /* Initialise the camera */
@@ -279,23 +268,30 @@ using namespace arm::app::object_detection;
         return true;
     }
 
+    /* CPU CAL reuses the accepted white-cross calibration.  It never invokes a
+     * PTE: the model only supplies the ROI that is sampled by the CPU reader. */
+    static void UpdateCpuNineCellReadout(const uint8_t* rgb, size_t rgbBytes,
+                                         int width, int height,
+                                         const std::vector<object_detection::DetectionResult>& results)
+    {
+        if (!cubeStatusLabel || !rgb || rgbBytes < static_cast<size_t>(width) * height * 3 ||
+            results.empty()) {
+            if (cubeStatusLabel) lv_label_set_text(cubeStatusLabel, "CPU CAL: no face");
+            return;
+        }
+        const auto& face = results.front();
+        char letters[10]{};
+        if (!hal_camera_cube_read_selected_roi(rgb, width, height, face.m_x0,
+                                               face.m_y0, face.m_w, face.m_h, letters)) {
+            lv_label_set_text_fmt(cubeStatusLabel, "CPU CAL: %s", hal_camera_cube_status());
+            return;
+        }
+        lv_label_set_text_fmt(cubeStatusLabel, "CPU CAL: %s", letters);
+    }
+
     /* Object detection inference handler. */
     bool ObjectDetectionHandler(ApplicationContext& ctx)
     {
-        hal_camera_start();
-        uint32_t cubeCapturedSize = 0;
-        if (!hal_camera_get_captured_frame(&cubeCapturedSize) || !cubeCapturedSize) {
-            return false;
-        }
-        {
-            ScopedLVGLLock lv_lock;
-            lv_label_set_text(cubeStatusLabel, cube_calibration_status());
-            if (cube_center_is_logo()) lv_obj_remove_flag(cubeLogoLabel, LV_OBJ_FLAG_HIDDEN);
-            else lv_obj_add_flag(cubeLogoLabel, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_invalidate(ScreenLayoutImageObject());
-        }
-        return true;
-
         auto& profiler = ctx.Get<Profiler&>("profiler");
         auto& model = ctx.Get<Model&>("model");
 
@@ -330,14 +326,6 @@ using namespace arm::app::object_detection;
             printf_err("hal_camera_get_captured_frame failed");
             return false;
         }
-        /* Cube preview classification runs on the CPU before model cropping.
-         * Publish the updated preview and bypass model execution for this demo. */
-        {
-            ScopedLVGLLock lv_lock;
-            lv_obj_invalidate(ScreenLayoutImageObject());
-        }
-        return true;
-
         if (!firstCameraFrameReported) {
             uint8_t minPixel = 255;
             uint8_t maxPixel = 0;
@@ -413,6 +401,8 @@ using namespace arm::app::object_detection;
 
             /* Draw boxes. */
             DrawDetectionBoxes(results, inputImgCols, inputImgRows);
+            UpdateCpuNineCellReadout(currImage, capturedFrameSize, inputImgCols,
+                                     inputImgRows, results);
 
         } // ScopedLVGLLock
 

@@ -54,10 +54,12 @@ void MainLoop()
     arm::app::fwk::iface::MemoryRegion computeMem{arm::app::tensorArena,
                                                   sizeof(arm::app::tensorArena)};
 
-    /* Keep the reference model linked, but CPU cube preview needs no model
-     * allocation, invocation, or NPU initialization. */
-    (void)modelMem;
-    (void)computeMem;
+    /* The YOLO detector owns the face ROI.  CPU colour sampling begins only
+     * after a successful model invocation, so retain normal NPU setup. */
+    if (!model.Init(computeMem, modelMem)) {
+        printf_err("Failed to initialise model\n");
+        return;
+    }
 
     if (!alif::app::ObjectDetectionInit(model)) {
         printf_err("Failed to initialise use case handler\n");

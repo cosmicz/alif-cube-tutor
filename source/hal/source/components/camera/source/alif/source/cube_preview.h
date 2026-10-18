@@ -28,6 +28,25 @@ static inline unsigned cube_nearest_colour(unsigned r, unsigned g, unsigned b)
     return best;
 }
 
+/* Geometry shared by the detector ROI bridge and its host test.  A 15px
+ * minimum preserves distinct 3x3 cells before resampling to the 240px guide. */
+static inline int cube_roi_is_valid(uint32_t frame_width, uint32_t frame_height,
+                                    int32_t x0, int32_t y0,
+                                    int32_t width, int32_t height)
+{
+    return width >= 15 && height >= 15 && x0 >= 0 && y0 >= 0 &&
+        x0 + width <= (int32_t)frame_width && y0 + height <= (int32_t)frame_height;
+}
+
+static inline uint32_t cube_roi_source_index(uint32_t frame_width, int32_t x0,
+                                              int32_t y0, int32_t width,
+                                              int32_t height, uint32_t tile_x,
+                                              uint32_t tile_y)
+{
+    return ((uint32_t)(y0 + (int32_t)(tile_y * (uint32_t)height / 240)) * frame_width) +
+           (uint32_t)(x0 + (int32_t)(tile_x * (uint32_t)width / 240));
+}
+
 typedef struct {
     uint32_t magic;
     uint32_t frame_count;

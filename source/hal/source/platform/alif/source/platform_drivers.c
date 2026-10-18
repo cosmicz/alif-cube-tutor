@@ -517,10 +517,14 @@ int platform_init(void)
 #endif
 
 #if defined(ARM_NPU)
-    /* The cube preview uses CPU RGB distances only. Avoid a stale NPU
-     * interrupt while starting this demo after the previous workload. */
-    NVIC_DisableIRQ((IRQn_Type)ETHOS_U_IRQN);
-    NVIC_ClearPendingIRQ((IRQn_Type)ETHOS_U_IRQN);
+    int state;
+
+    /* The face ROI is provided by the Ethos-U model before CPU colour
+     * sampling, so initialise and prioritize the NPU normally. */
+    if (0 != (state = arm_ethosu_npu_init())) {
+        return state;
+    }
+    NVIC_SetPriority((IRQn_Type)ETHOS_U_IRQN, 0x60);
 
 #endif /* ARM_NPU */
 

@@ -90,6 +90,17 @@ bool hal_camera_start(void);
  */
 const uint8_t* hal_camera_get_captured_frame(uint32_t* size);
 
+/* Read nine cells from the selected ML-frame face ROI.  The implementation
+ * resamples a private BGR tile and reuses the validated cube calibration;
+ * the caller's model frame is never modified. */
+bool hal_camera_cube_read_selected_roi(const uint8_t* rgb, uint32_t frame_width,
+                                       uint32_t frame_height, int32_t x0,
+                                       int32_t y0, int32_t width, int32_t height,
+                                       char letters[10]);
+
+/* Human-readable CAL/READ state maintained by the accepted any-button path. */
+const char* hal_camera_cube_status(void);
+
 /**
  * @brief  Stops the camera device.
  * @return true if successful, false otherwise.
