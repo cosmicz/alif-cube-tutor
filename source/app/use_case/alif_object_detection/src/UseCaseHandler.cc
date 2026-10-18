@@ -372,10 +372,14 @@ using namespace arm::app::object_detection;
         }
 
         {
-            ScopedLVGLLock lv_lock;
-
-            /* Camera preview buffer is full-panel RGB888 in LVGL byte order. */
-            lv_obj_invalidate(ScreenLayoutImageObject());
+            /* arc-fdo1 2026-10-18: the LVGL lock masks PendSV (lv_timer_handler).  Holding it across
+             * preprocessing + NPU inference + decode starves rendering for the whole inference; only
+             * the LVGL calls below need it.  Inference touches no LVGL state. */
+            {
+                ScopedLVGLLock lv_lock;
+                /* Camera preview buffer is full-panel RGB888 in LVGL byte order. */
+                lv_obj_invalidate(ScreenLayoutImageObject());
+            }
 
 #if SHOW_INF_TIME
         uint32_t inf_prof = Get_SysTick_Cycle_Count32();
@@ -430,6 +434,7 @@ using namespace arm::app::object_detection;
             (void)powerOk;
 #endif
 
+            ScopedLVGLLock lv_lock;
             /* Draw boxes. */
             DrawDetectionBoxes(results, inputImgCols, inputImgRows);
             UpdateCpuNineCellReadout(currImage, capturedFrameSize, inputImgCols,

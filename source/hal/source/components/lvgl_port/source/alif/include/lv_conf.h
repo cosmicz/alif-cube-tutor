@@ -327,7 +327,7 @@
 #endif
 
 /** Use Renesas Dave2D on RA  platforms. */
-#define LV_USE_DRAW_DAVE2D 1
+#define LV_USE_DRAW_DAVE2D 0
 
 /** Draw using cached SDL textures*/
 #define LV_USE_DRAW_SDL 0

@@ -120,7 +120,9 @@ static inline unsigned cube_hsv_colour(const float rgb[3], float hsv[3])
      * real chroma.  Keep the neutral region narrow and use its hue evidence. */
     if (hsv[1] < 0.10f && high > 0.55f) return 0;
     if (hue >= 340 || hue < 20) return 2;
-    if (hue < 45) return 3;
+    /* Captured table yellow is H41/S0.32..0.37; leave the H25 orange band
+     * intact and make the natural orange/yellow boundary H35. */
+    if (hue < 35) return 3;
     if (hue < 75) return 1;
     if (hue < 170) return 5;
     if (hue < 270) return 4;
@@ -267,10 +269,12 @@ static inline void cube_preview_read_and_draw(uint8_t *bgr, unsigned width,
          * single global distance gate.  Keep the lower cyan edge below H210
          * strict: the existing H193/S0.257/V0.498 regression remains
          * deliberately abstained. */
+        const int qualified_blue = classes[cell] == 4 && hsv[0] >= 210.0f &&
+            hsv[1] >= 0.10f && hsv[2] >= 0.35f;
         const float max_hue_distance = classes[cell] == 4
-            ? (hsv[0] >= 210.0f ? 50.0f : 20.0f)
+            ? (hsv[0] >= 210.0f ? 75.0f : 20.0f)
             : (classes[cell] == 5 ? 60.0f : 20.0f);
-        if ((hsv[1] < 0.2f && hsv[2] < 0.55f) ||
+        if (((hsv[1] < 0.2f && hsv[2] < 0.55f) && !qualified_blue) ||
             diagnostics->stddev[cell] > 28 || distance > max_hue_distance) {
             classes[cell] = 6;
             diagnostics->abstain_mask |= 1u << cell;

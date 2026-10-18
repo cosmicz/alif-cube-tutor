@@ -27,6 +27,7 @@
  * limitations under the License.
  */
 
+#include <stdint.h>
 #include "ethosu_cpu_cache.h"
 
 #include "RTE_Components.h"         /* For CPU related defintiions */
@@ -68,27 +69,15 @@ void ethosu_flush_dcache(const uint64_t *base_addr, const size_t *base_addr_size
     }
 
     if (need_flush) {
-
-        /**
-         * @note We could choose to call the `SCB_CleanDCache_by_Addr` function
-         *       here, but the sizes which this function is called for, can
-         *       cause unnecessary delays. It's worth noting that this function
-         *       is called from the Arm Ethos-U NPU drive repeatedly for each
-         *       region it accesses. This could even be RO memory which does
-         *       not need cache maintenance, along with parts of the input and
-         *       output tensors which rightly need to be cleaned. Therefore, to
-         *       reduce overhead of repeated calls for large memory sizes, we
-         *       call the clean and invalidation functions for whole cache.
-         *
-         *       If the neural network to be executed is completely falling
-         *       onto the NPU, consider disabling the data cache altogether
-         *       for the duration of the inference to further reduce the cache
-         *       maintenance burden in these functions.
-         */
-
-        /** Clean the cache */
-        trace("Cleaning data cache\n");
-        SCB_CleanDCache();
+        /* arc-fdo1 2026-10-18: clean only the regions the driver names.  A whole-cache clean
+         * runs a long interruptible set/way loop over every cacheable buffer in the system,
+         * including the LVGL framebuffer rows written from the LCD tear interrupt. */
+        for (int i = 0; i < num_base_addr; i++) {
+            uint32_t *p = (uint32_t *)(uintptr_t)base_addr[i];
+            if (p && base_addr_size[i] && ethosu_area_needs_flush_dcache(p, base_addr_size[i])) {
+                SCB_CleanDCache_by_Addr(p, (int32_t)base_addr_size[i]);
+            }
+        }
     } else {
         __DSB();
     }
@@ -105,14 +94,12 @@ void ethosu_invalidate_dcache(const uint64_t *base_addr, const size_t *base_addr
     }
 
     if (need_flush) {
-        /**
-         * See note in ethosu_flush_dcache function for why we clean the whole
-         * cache instead of calling it for specific addresses.
-         **/
-        trace("Invalidating data cache\n");
-        /* Not safe to simply invalidate without cleaning unless we know there are no write-back areas in the system */
-        SCB_CleanInvalidateDCache();
-
+        for (int i = 0; i < num_base_addr; i++) {
+            uint32_t *p = (uint32_t *)(uintptr_t)base_addr[i];
+            if (p && base_addr_size[i] && ethosu_area_needs_invalidate_dcache(p, base_addr_size[i])) {
+                SCB_InvalidateDCache_by_Addr(p, (int32_t)base_addr_size[i]);
+            }
+        }
     } else {
         __DSB();
     }
