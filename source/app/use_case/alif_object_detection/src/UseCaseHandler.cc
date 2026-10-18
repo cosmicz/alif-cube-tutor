@@ -53,12 +53,18 @@
 #include "lv_port.h"
 #include "lvgl.h"
 
-#define PREVIEW_X RTE_PANEL_HACTIVE_TIME
-#define PREVIEW_Y RTE_PANEL_VACTIVE_LINE
+#include "cube_display_geometry.h"
+#define PREVIEW_X CUBE_PREVIEW_WIDTH
+#define PREVIEW_Y CUBE_PREVIEW_HEIGHT
+
+extern "C" const char *cube_calibration_status(void);
+extern "C" int cube_center_is_logo(void);
 
 namespace {
 lv_style_t boxStyle;
 bool firstCameraFrameReported = false;
+lv_obj_t *cubeStatusLabel = nullptr;
+lv_obj_t *cubeLogoLabel = nullptr;
 };
 
 using arm::app::Profiler;
@@ -114,6 +120,22 @@ using namespace arm::app::object_detection;
         lv_style_set_outline_pad(&boxStyle, 0);
         lv_style_set_outline_color(&boxStyle, lv_color_hex(0x00FF00));
         lv_style_set_radius(&boxStyle, 0);
+        cubeStatusLabel = lv_label_create(lv_layer_top());
+        lv_obj_set_style_text_color(cubeStatusLabel, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_set_style_bg_color(cubeStatusLabel, lv_color_hex(0x000000), 0);
+        lv_obj_set_style_bg_opa(cubeStatusLabel, LV_OPA_COVER, 0);
+        lv_obj_set_style_pad_all(cubeStatusLabel, 6, 0);
+        lv_obj_set_style_text_align(cubeStatusLabel, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_width(cubeStatusLabel, PREVIEW_X);
+        lv_obj_set_pos(cubeStatusLabel, 0, CUBE_STATUS_Y);
+        lv_label_set_text(cubeStatusLabel, cube_calibration_status());
+        cubeLogoLabel = lv_label_create(lv_layer_top());
+        lv_label_set_text(cubeLogoLabel, "logo");
+        lv_obj_set_style_text_color(cubeLogoLabel, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_set_style_bg_color(cubeLogoLabel, lv_color_hex(0x000000), 0);
+        lv_obj_set_style_bg_opa(cubeLogoLabel, LV_OPA_COVER, 0);
+        lv_obj_set_pos(cubeLogoLabel, PREVIEW_X / 2 - 16, PREVIEW_Y / 2 - 10);
+        lv_obj_add_flag(cubeLogoLabel, LV_OBJ_FLAG_HIDDEN);
         lv_port_unlock(lv_lock_state);
 
         /* Initialise the camera */
@@ -267,6 +289,9 @@ using namespace arm::app::object_detection;
         }
         {
             ScopedLVGLLock lv_lock;
+            lv_label_set_text(cubeStatusLabel, cube_calibration_status());
+            if (cube_center_is_logo()) lv_obj_remove_flag(cubeLogoLabel, LV_OBJ_FLAG_HIDDEN);
+            else lv_obj_add_flag(cubeLogoLabel, LV_OBJ_FLAG_HIDDEN);
             lv_obj_invalidate(ScreenLayoutImageObject());
         }
         return true;

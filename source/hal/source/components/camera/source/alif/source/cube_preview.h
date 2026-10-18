@@ -41,7 +41,38 @@ typedef struct {
     float hue_distance[9];
     uint32_t abstain_mask;
     uint32_t abstain_count;
+    float white_ref[3];
+    uint32_t mode; /* 0: CALIBRATION, 1: READ */
+    uint32_t white_valid;
+    uint32_t white_streak;
+    uint32_t abstain_since_ms;
+    uint32_t white_success_count;
+    float corner_rgb[4][3];
+    float corner_hsv[4][3];
+    float candidate_rgb[3];
+    uint32_t logo_mask;
+    uint32_t reference_mask;
+    float logo_ref_raw[3];
+    float logo_ref_rgb[3];
+    float logo_ref_hsv[3];
+    uint32_t logo_ref_valid;
+    uint32_t cross_valid;
+    uint32_t lock_rejected;
+    float cross_balanced_rgb[4][3];
+    float cross_hsv[4][3];
 } cube_diagnostics;
+
+static inline float cube_median4(const float input[4])
+{
+    float values[4] = {input[0], input[1], input[2], input[3]};
+    for (unsigned i = 1; i < 4; ++i) {
+        float value = values[i];
+        unsigned j = i;
+        while (j && values[j - 1] > value) { values[j] = values[j - 1]; --j; }
+        values[j] = value;
+    }
+    return (values[1] + values[2]) / 2;
+}
 
 static inline float cube_clamp(float value, float low, float high)
 {
@@ -79,41 +110,52 @@ static inline unsigned cube_hsv_colour(const float rgb[3], float hsv[3])
  * RGB565 scanout. Sample the untouched source before drawing any overlays. */
 static inline void cube_preview_read_and_draw(uint8_t *bgr, unsigned width,
                                               unsigned height, char letters[10],
-                                              cube_diagnostics *diagnostics)
+                                              cube_diagnostics *diagnostics,
+                                              uint32_t now_ms, uint32_t calibration_request)
 {
     unsigned classes[9];
+    uint32_t white_success_before = diagnostics->white_success_count;
     uint32_t totals[3] = {0, 0, 0};
     unsigned balance_pixels = 0;
     diagnostics->abstain_mask = diagnostics->abstain_count = 0;
+    diagnostics->logo_mask = 0;
+    diagnostics->reference_mask = diagnostics->mode == 0 ? 0xAA : 0;
     const unsigned x0 = (width - 240) / 2, y0 = (height - 240) / 2;
     for (unsigned cell = 0; cell < 9; ++cell) {
-        unsigned r = 0, g = 0, b = 0;
-        uint32_t squares[3] = {0, 0, 0};
         unsigned cx = x0 + (cell % 3) * 80 + 40;
         unsigned cy = y0 + (cell / 3) * 80 + 40;
-        for (unsigned y = cy - 5; y < cy + 5; ++y) {
-            for (unsigned x = cx - 5; x < cx + 5; ++x) {
-                const uint8_t *pixel = bgr + (y * width + x) * 3;
-                b += pixel[0]; g += pixel[1]; r += pixel[2];
-                squares[0] += pixel[2] * pixel[2];
-                squares[1] += pixel[1] * pixel[1];
-                squares[2] += pixel[0] * pixel[0];
+        float patch_means[3][4], patch_variances[3][4];
+        for (unsigned patch = 0; patch < 4; ++patch) {
+            unsigned px = cx + ((patch & 1) ? 24 : -24);
+            unsigned py = cy + ((patch & 2) ? 24 : -24);
+            uint32_t sum[3] = {0, 0, 0}, squares[3] = {0, 0, 0};
+            for (unsigned y = py - 3; y < py + 3; ++y) {
+                for (unsigned x = px - 3; x < px + 3; ++x) {
+                    const uint8_t *p = bgr + (y * width + x) * 3;
+                    for (unsigned c = 0; c < 3; ++c) {
+                        unsigned value = p[2 - c];
+                        sum[c] += value; squares[c] += value * value;
+                    }
+                }
+            }
+            for (unsigned c = 0; c < 3; ++c) {
+                patch_means[c][patch] = sum[c] / 36.0f;
+                patch_variances[c][patch] = squares[c] / 36.0f -
+                    patch_means[c][patch] * patch_means[c][patch];
             }
         }
-        diagnostics->raw_rgb[cell][0] = r / 100.0f;
-        diagnostics->raw_rgb[cell][1] = g / 100.0f;
-        diagnostics->raw_rgb[cell][2] = b / 100.0f;
         float max_variance = 0;
         for (unsigned c = 0; c < 3; ++c) {
-            float mean = diagnostics->raw_rgb[cell][c];
-            float variance = squares[c] / 100.0f - mean * mean;
+            diagnostics->raw_rgb[cell][c] = cube_median4(patch_means[c]);
+            float variance = cube_median4(patch_variances[c]);
             if (variance > max_variance) max_variance = variance;
+            totals[c] += (uint32_t)(diagnostics->raw_rgb[cell][c] * 100);
         }
-        /* Maximum per-channel patch standard deviation is conservative. */
+        /* Median patch variance rejects one logo/highlight outlier. */
         diagnostics->stddev[cell] = sqrtf(max_variance);
-        totals[0] += r; totals[1] += g; totals[2] += b;
         balance_pixels += 100;
-        unsigned raw_class = cube_nearest_colour(r / 100, g / 100, b / 100);
+        unsigned raw_class = cube_nearest_colour(diagnostics->raw_rgb[cell][0],
+            diagnostics->raw_rgb[cell][1], diagnostics->raw_rgb[cell][2]);
         diagnostics->raw_letters[cell] = cube_palette[raw_class].letter;
     }
     /* Estimate gains from nine sticker patches plus the unpainted perimeter,
@@ -127,8 +169,57 @@ static inline void cube_preview_read_and_draw(uint8_t *bgr, unsigned width,
         }
     }
     float overall = (totals[0] + totals[1] + totals[2]) / 3.0f;
+    if (calibration_request == 2) {
+        diagnostics->mode = 0;
+        diagnostics->white_valid = 0;
+        diagnostics->logo_ref_valid = 0;
+        diagnostics->white_streak = 0;
+        diagnostics->lock_rejected = 0;
+    }
+    if (diagnostics->mode == 0) {
+        const unsigned edges[4] = {1, 3, 5, 7};
+        unsigned qualified = 0;
+        for (unsigned corner = 0; corner < 4; ++corner) {
+            for (unsigned c = 0; c < 3; ++c)
+                diagnostics->corner_rgb[corner][c] = diagnostics->raw_rgb[edges[corner]][c];
+            cube_hsv_colour(diagnostics->corner_rgb[corner], diagnostics->corner_hsv[corner]);
+            if (diagnostics->corner_hsv[corner][1] < 0.35f &&
+                diagnostics->corner_hsv[corner][2] > 0.4f) ++qualified;
+        }
+        for (unsigned c = 0; c < 3; ++c) {
+            float edge_values[4];
+            for (unsigned i = 0; i < 4; ++i) edge_values[i] = diagnostics->corner_rgb[i][c];
+            diagnostics->candidate_rgb[c] = cube_median4(edge_values);
+        }
+        diagnostics->cross_valid = 1;
+        for (unsigned edge = 0; edge < 4; ++edge) {
+            for (unsigned c = 0; c < 3; ++c) {
+                float candidate = diagnostics->candidate_rgb[c];
+                float value = diagnostics->corner_rgb[edge][c];
+                diagnostics->cross_balanced_rgb[edge][c] = cube_clamp(
+                    value * 235.0f / (candidate > 1 ? candidate : 1), 0, 255);
+                if (candidate < 1 || fabsf(value - candidate) > 0.15f * candidate)
+                    diagnostics->cross_valid = 0;
+            }
+            cube_hsv_colour(diagnostics->cross_balanced_rgb[edge], diagnostics->cross_hsv[edge]);
+            if (diagnostics->cross_hsv[edge][1] >= 0.25f ||
+                diagnostics->cross_hsv[edge][2] <= 0.5f) diagnostics->cross_valid = 0;
+        }
+        diagnostics->white_streak = qualified == 4 ? diagnostics->white_streak + 1 : 0;
+        if (calibration_request == 1 && diagnostics->cross_valid) {
+            for (unsigned c = 0; c < 3; ++c)
+                diagnostics->white_ref[c] = diagnostics->candidate_rgb[c];
+            diagnostics->white_valid = 1;
+            diagnostics->mode = 1;
+            diagnostics->abstain_since_ms = 0;
+            diagnostics->lock_rejected = 0;
+            ++diagnostics->white_success_count;
+        } else if (calibration_request == 1) diagnostics->lock_rejected = 1;
+    }
     for (unsigned c = 0; c < 3; ++c)
-        diagnostics->gains[c] = totals[c] ? cube_clamp(overall / totals[c], 0.5f, 2.0f) : 2.0f;
+        diagnostics->gains[c] = diagnostics->white_valid
+            ? 235.0f / (diagnostics->white_ref[c] > 1 ? diagnostics->white_ref[c] : 1)
+            : (totals[c] ? cube_clamp(overall / totals[c], 0.5f, 2.0f) : 2.0f);
     (void)balance_pixels; /* Equal pixel counts cancel in the gain ratios. */
     for (unsigned cell = 0; cell < 9; ++cell) {
         for (unsigned c = 0; c < 3; ++c)
@@ -153,19 +244,84 @@ static inline void cube_preview_read_and_draw(uint8_t *bgr, unsigned width,
             diagnostics->abstain_mask |= 1u << cell;
             ++diagnostics->abstain_count;
         }
+    }
+    if (white_success_before != diagnostics->white_success_count) {
+        for (unsigned c = 0; c < 3; ++c) {
+            diagnostics->logo_ref_raw[c] = diagnostics->raw_rgb[4][c];
+            diagnostics->logo_ref_rgb[c] = diagnostics->balanced_rgb[4][c];
+            diagnostics->logo_ref_hsv[c] = diagnostics->hsv[4][c];
+        }
+        diagnostics->logo_ref_valid = 1;
+    }
+    if (diagnostics->logo_ref_valid) {
+        for (unsigned cell = 0; cell < 9; ++cell) {
+            if (classes[cell] != 6 && classes[cell] != 4 && diagnostics->hsv[cell][2] >= 0.55f)
+                continue;
+            float distance_squared = 0;
+            for (unsigned c = 0; c < 3; ++c) {
+                float delta = diagnostics->balanced_rgb[cell][c] - diagnostics->logo_ref_rgb[c];
+                distance_squared += delta * delta;
+            }
+            if (distance_squared < 25.0f * 25.0f) {
+                if (classes[cell] == 6) {
+                    diagnostics->abstain_mask &= ~(1u << cell);
+                    --diagnostics->abstain_count;
+                }
+                classes[cell] = 0;
+                diagnostics->logo_mask |= 1u << cell;
+            }
+        }
+    }
+    unsigned white_others = 0;
+    for (unsigned cell = 0; cell < 9; ++cell)
+        if (cell != 4 && classes[cell] == 0) ++white_others;
+    if (diagnostics->mode == 0) diagnostics->logo_mask |= 1u << 4;
+    if (white_others == 8 && classes[4] != 0) {
+        if (classes[4] == 6) {
+            diagnostics->abstain_mask &= ~(1u << 4);
+            --diagnostics->abstain_count;
+        }
+        classes[4] = 0;
+        diagnostics->logo_mask |= 1u << 4;
+    }
+    for (unsigned cell = 0; cell < 9; ++cell) {
         letters[cell] = cube_palette[classes[cell]].letter;
         diagnostics->balanced_letters[cell] = letters[cell];
     }
     letters[9] = '\0';
     diagnostics->raw_letters[9] = diagnostics->balanced_letters[9] = '\0';
+    (void)now_ms; /* White-cross UX enters calibration only through BACK. */
+    diagnostics->reference_mask = diagnostics->mode == 0 ? 0xAA : 0;
     diagnostics->magic = 0x43554245;
     ++diagnostics->frame_count;
+    /* Apply the same gain to the visible camera preview, before drawing
+     * guide/swatch UI. Diagnostics retain the original and corrected samples. */
+    uint32_t gain_q8[3];
+    for (unsigned c = 0; c < 3; ++c) gain_q8[c] = (uint32_t)(diagnostics->gains[c] * 256);
+    for (unsigned i = 0; i < width * height; ++i) {
+        uint8_t *p = bgr + i * 3;
+        for (unsigned c = 0; c < 3; ++c) {
+            uint32_t value = (p[2 - c] * gain_q8[c] + 128) >> 8;
+            p[2 - c] = value > 255 ? 255 : value;
+        }
+    }
     for (unsigned y = 0; y < 240; ++y) {
         for (unsigned x = 0; x < 240; ++x) {
             if (x % 80 < 2 || y % 80 < 2 || x >= 238 || y >= 238) {
                 uint8_t *pixel = bgr + ((y0 + y) * width + x0 + x) * 3;
                 pixel[0] = pixel[1] = pixel[2] = 255;
             }
+        }
+    }
+    if (diagnostics->reference_mask) {
+        for (unsigned cell = 1; cell < 8; cell += 2) {
+            unsigned left = x0 + cell % 3 * 80, top = y0 + cell / 3 * 80;
+            for (unsigned y = 2; y < 78; ++y)
+                for (unsigned x = 2; x < 78; ++x)
+                    if (x < 4 || x >= 76 || y < 4 || y >= 76) {
+                        uint8_t *p = bgr + ((top + y) * width + left + x) * 3;
+                        p[0] = 0; p[1] = p[2] = 255;
+                    }
         }
     }
     for (unsigned cell = 0; cell < 9; ++cell) {
@@ -176,6 +332,9 @@ static inline void cube_preview_read_and_draw(uint8_t *bgr, unsigned width,
             for (unsigned x = left; x < left + 20; ++x) {
                 uint8_t *pixel = bgr + (y * width + x) * 3;
                 pixel[0] = colour->b; pixel[1] = colour->g; pixel[2] = colour->r;
+                if ((diagnostics->logo_mask & (1u << cell)) &&
+                    x - left >= 9 && x - left <= 11 && y - top >= 9 && y - top <= 11)
+                    pixel[0] = pixel[1] = pixel[2] = 0;
                 if (classes[cell] == 6 &&
                     ((x - left) == (y - top) || (x - left) + (y - top) == 19))
                     pixel[0] = pixel[1] = pixel[2] = 0;

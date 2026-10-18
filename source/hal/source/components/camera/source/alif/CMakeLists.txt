@@ -23,6 +23,11 @@ project(hal_camera_alif
 # Add top level interface library
 set(CAMERA_IFACE_TARGET camera_iface_alif)
 add_library(${CAMERA_IFACE_TARGET} INTERFACE)
+if (NOT DEFINED ROTATE_DISPLAY)
+    set(ROTATE_DISPLAY "0" CACHE STRING "Rotate display by 0, 90, 180 or 270 degrees")
+endif()
+target_compile_definitions(${CAMERA_IFACE_TARGET} INTERFACE
+    CUBE_DISPLAY_ROTATION=${ROTATE_DISPLAY})
 target_include_directories(${CAMERA_IFACE_TARGET}
     INTERFACE
     include

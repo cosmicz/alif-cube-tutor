@@ -32,10 +32,55 @@
 #include "cube_preview.h"
 
 char cube_face_letters[10];
-cube_diagnostics cube_read_diagnostics;
+cube_diagnostics cube_read_diagnostics = {.mode = 1};
+volatile uint32_t cube_calibration_request;
+static char cube_status_text[160];
 
-#define CAMERA_PREVIEW_WIDTH  RTE_PANEL_HACTIVE_TIME
-#define CAMERA_PREVIEW_HEIGHT RTE_PANEL_VACTIVE_LINE
+const char *cube_calibration_status(void)
+{
+    if (!cube_read_diagnostics.mode) {
+        snprintf(cube_status_text, sizeof cube_status_text,
+                 "%sSHOW WHITE CROSS\nPRESS DOWN TO LOCK\nRGB %.0f %.0f %.0f | WB: %s",
+                 cube_read_diagnostics.lock_rejected ? "CROSS NOT WHITE\n" : "",
+                 (double)cube_read_diagnostics.candidate_rgb[0],
+                 (double)cube_read_diagnostics.candidate_rgb[1],
+                 (double)cube_read_diagnostics.candidate_rgb[2],
+                 cube_read_diagnostics.white_valid ? "locked" : "auto");
+        return cube_status_text;
+    }
+    if (cube_read_diagnostics.abstain_count >= 5)
+        return cube_read_diagnostics.white_valid ? "NO CUBE\nWB: locked" : "NO CUBE\nWB: auto";
+    return cube_read_diagnostics.white_valid ? "READ\nWB: locked\nDOWN: CALIBRATE" : "READ\nWB: auto\nDOWN: CALIBRATE";
+}
+
+int cube_center_is_logo(void) { return (cube_read_diagnostics.logo_mask & 16) != 0; }
+
+static uint32_t cube_button_request(uint32_t now_ms)
+{
+    static uint32_t down_since;
+    static bool down_before, long_sent;
+    BOARD_BUTTON_STATE state = BOARD_BUTTON_STATE_HIGH;
+    BOARD_BUTTON1_GetState(&state);
+    bool down = state == BOARD_BUTTON_STATE_LOW;
+    uint32_t request = cube_calibration_request;
+    cube_calibration_request = 0;
+    if (down && !down_before) {
+        down_since = now_ms;
+        long_sent = false;
+    }
+    if (down && !long_sent && (uint32_t)(now_ms - down_since) >= 1500) {
+        request = 2;
+        long_sent = true;
+    }
+    if (!down && down_before && !long_sent && (uint32_t)(now_ms - down_since) >= 50)
+        request = cube_read_diagnostics.mode == 0 ? 1 : 2;
+    down_before = down;
+    return request;
+}
+
+#include "cube_display_geometry.h"
+#define CAMERA_PREVIEW_WIDTH  CUBE_PREVIEW_WIDTH
+#define CAMERA_PREVIEW_HEIGHT CUBE_PREVIEW_HEIGHT
 /* Full-panel preview uses LVGL RGB888 (B,G,R byte order). */
 static uint8_t preview_image[CAMERA_PREVIEW_WIDTH * CAMERA_PREVIEW_HEIGHT * RGB_BYTES]
     __attribute__((aligned(32), section(".bss.large_ram")));
@@ -250,11 +295,9 @@ void camera_update_preview(const uint8_t* image,
         uint8_t* dst      = preview_image + y * CAMERA_PREVIEW_WIDTH * RGB_BYTES;
         for (uint32_t x = 0; x < CAMERA_PREVIEW_WIDTH; ++x) {
             const uint32_t column = x * crop_width / CAMERA_PREVIEW_WIDTH;
-#ifdef ALIF_CAMERA_APPKIT
-            const uint32_t sx = x_origin + column;
-#else
+            /* Mirror the LCD source before sampling/overlays: selfie view and
+             * classified swatches share exactly the same display coordinates. */
             const uint32_t sx = x_origin + crop_width - 1 - column;
-#endif
             if (pixel_bytes == RGB_BYTES) {
                 const uint8_t* src = image + (sy * width + sx) * RGB_BYTES;
                 *dst++             = src[2];
@@ -271,9 +314,17 @@ void camera_update_preview(const uint8_t* image,
             *dst++               = (red << 3) | (red >> 2);
         }
     }
+    uint32_t white_success_before = cube_read_diagnostics.white_success_count;
+    uint32_t now_ms = Get_SysTick_Count();
     cube_preview_read_and_draw(preview_image, CAMERA_PREVIEW_WIDTH,
                                CAMERA_PREVIEW_HEIGHT, cube_face_letters,
-                               &cube_read_diagnostics);
+                               &cube_read_diagnostics, now_ms, cube_button_request(now_ms));
+    if (white_success_before != cube_read_diagnostics.white_success_count) {
+        printf("WHITE LOCKED %.2f %.2f %.2f\n", (double)cube_read_diagnostics.white_ref[0],
+               (double)cube_read_diagnostics.white_ref[1], (double)cube_read_diagnostics.white_ref[2]);
+        printf("LOGO %.2f %.2f %.2f\n", (double)cube_read_diagnostics.logo_ref_rgb[0],
+               (double)cube_read_diagnostics.logo_ref_rgb[1], (double)cube_read_diagnostics.logo_ref_rgb[2]);
+    }
     printf("CUBE raw=%s balanced=%s\n", cube_read_diagnostics.raw_letters,
            cube_read_diagnostics.balanced_letters);
     if (cube_read_diagnostics.abstain_count >= 5) printf("NO CUBE\n");
