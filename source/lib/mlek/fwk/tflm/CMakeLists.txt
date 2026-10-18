@@ -69,6 +69,14 @@ target_link_libraries(${ML_FWK_TFLM_TARGET} PUBLIC
 
 target_compile_definitions(${ML_FWK_TFLM_TARGET} INTERFACE MLEK_FWK_TFLM=1)
 
+# The model wrappers select their CPU fallback operators at compile time.  An
+# assumed Ethos-U configuration must reach this library as well as the UI
+# target; otherwise the resolver retains unused Conv/Pad/Pool kernels and can
+# exceed its fixed operation capacity before registering Ethos-U.
+if (ETHOS_U_NPU_ASSUMED)
+    target_compile_definitions(${ML_FWK_TFLM_TARGET} PRIVATE ETHOS_U_NPU_ASSUMED=1)
+endif()
+
 # Set the source file property to indicate that it should not use the logging
 # facility from the Cortex-M CPU generic target unless it is an internally
 # configured target. Reason: for external target, we can't assume that it

@@ -35,7 +35,9 @@ __STACK_SIZE = 0x00008000;
 __HEAP_SIZE  = 0x00017000;
 /* DevKit E8 app image starts at the same MRAM boot address as the CMSIS app. */
 __ROM_BASE = 0x80200000;
-__ROM_SIZE = 0x00477000;
+/* Physical AppKit-E8 MRAM ends at 0x80580000.  Do not permit a link that
+ * relies on the larger generic DFP window. */
+__ROM_SIZE = 0x00380000;
 
 #ifdef BOARD_OSPI_FLASH_BASE
 __OSPI_FLASH_BASE = BOARD_OSPI_FLASH_BASE;
