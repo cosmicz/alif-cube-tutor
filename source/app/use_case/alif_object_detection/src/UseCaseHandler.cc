@@ -27,11 +27,11 @@
  * limitations under the License.
  */
 #include "UseCaseHandler.hpp"
-#include "mlek/use_case/object_detection/DetectorPostProcessing.hpp"
-#include "mlek/use_case/object_detection/DetectorPreProcessing.hpp"
+#include "CubeFaceYoloV8.hpp"
 #include "UseCaseCommonUtils.hpp"
 #include "mlek/fwk/tflm/YoloFastestModel.hpp"
 #include "mlek/log/log_macros.h"
+#include "mlek/use_case/object_detection/DetectionResult.hpp"
 #if defined(GPIO_PROFILING)
 #include "board_utils.h"
 #endif
@@ -65,8 +65,6 @@ using arm::app::Profiler;
 using arm::app::ApplicationContext;
 using arm::app::fwk::iface::Model;
 using arm::app::fwk::tflm::YoloFastestModel;
-using arm::app::DetectorPreProcess;
-using arm::app::DetectorPostProcess;
 
 namespace alif {
 namespace app {
@@ -126,8 +124,12 @@ using namespace arm::app::object_detection;
 
         auto inputTensor = model.GetInputTensor(0);
         const auto inputShape = inputTensor->Shape();
-        const uint32_t inputImgCols = inputShape[arm::app::fwk::tflm::YoloFastestModel::ms_inputColsIdx];
-        const uint32_t inputImgRows   = inputShape[arm::app::fwk::tflm::YoloFastestModel::ms_inputRowsIdx];
+        if (inputShape.size() != 4 || inputShape[0] != 1 || inputShape[1] != 3) {
+            printf_err("Cube-face YOLOv8 input must be [1,3,H,W]\n");
+            return false;
+        }
+        const uint32_t inputImgRows = inputShape[2];
+        const uint32_t inputImgCols = inputShape[3];
 
         auto bCamera = hal_camera_configure(inputImgCols, inputImgRows, HAL_CAMERA_MODE_SINGLE_FRAME, HAL_CAMERA_COLOUR_FORMAT_RGB888);
         if (!bCamera) {
@@ -155,6 +157,106 @@ using namespace arm::app::object_detection;
            const std::vector<object_detection::DetectionResult>& results,
            int imgInputCols, int imgInputRows);
 
+    /* The cube-face model is YOLOv8 detect, not the vendor's two-branch
+     * YoloFastest model.  Its sole output is quantized [1, 5, 756] CHW:
+     * centre x/y, width, height, then the one cube-face confidence.  Select
+     * the largest valid face rather than a high-confidence individual sticker. */
+    static bool DecodeCubeFaceYoloV8(
+            const std::shared_ptr<arm::app::fwk::iface::TensorIface>& outputTensor,
+            int inputImgCols,
+            int inputImgRows,
+            std::vector<object_detection::DetectionResult>& results)
+    {
+        constexpr size_t channels = 5;
+        constexpr size_t candidates = 756;
+        constexpr float confidenceThreshold = 0.25f;
+
+        if (!outputTensor || outputTensor->GetNumElements() != channels * candidates ||
+            (outputTensor->Type() != arm::app::fwk::iface::TensorType::INT8 &&
+             outputTensor->Type() != arm::app::fwk::iface::TensorType::FP32)) {
+            printf_err("Unexpected cube-face YOLOv8 output tensor\n");
+            return false;
+        }
+
+        const auto quant = outputTensor->GetQuantParams();
+        const auto tensorType = outputTensor->Type();
+        const auto* int8Data = tensorType == arm::app::fwk::iface::TensorType::INT8
+                                   ? outputTensor->GetData<int8_t>()
+                                   : nullptr;
+        const auto* floatData = tensorType == arm::app::fwk::iface::TensorType::FP32
+                                    ? outputTensor->GetData<float>()
+                                    : nullptr;
+        if ((int8Data && quant.scale <= 0.0f) || (!int8Data && !floatData)) {
+            printf_err("Invalid cube-face YOLOv8 output quantization\n");
+            return false;
+        }
+
+        const auto valueAt = [&](size_t index) {
+            return floatData ? floatData[index]
+                             : (static_cast<float>(int8Data[index]) - quant.offset) * quant.scale;
+        };
+
+        const size_t best = object_detection::SelectLargestFaceCandidate(
+                valueAt, candidates, confidenceThreshold);
+        if (best == candidates) {
+            return true;
+        }
+
+        const auto dequantize = [&](size_t channel) {
+            return valueAt(channel * candidates + best);
+        };
+        const float centreX = dequantize(0) * inputImgCols;
+        const float centreY = dequantize(1) * inputImgRows;
+        const float width = std::max(0.0f, dequantize(2) * inputImgCols);
+        const float height = std::max(0.0f, dequantize(3) * inputImgRows);
+        const float x0 = std::clamp(centreX - width / 2.0f, 0.0f,
+                                    static_cast<float>(inputImgCols));
+        const float y0 = std::clamp(centreY - height / 2.0f, 0.0f,
+                                    static_cast<float>(inputImgRows));
+        const float x1 = std::clamp(centreX + width / 2.0f, 0.0f,
+                                    static_cast<float>(inputImgCols));
+        const float y1 = std::clamp(centreY + height / 2.0f, 0.0f,
+                                    static_cast<float>(inputImgRows));
+        if (x1 <= x0 || y1 <= y0) {
+            return true;
+        }
+
+        results.push_back({valueAt(4 * candidates + best), static_cast<int>(x0), static_cast<int>(y0),
+                           static_cast<int>(x1 - x0), static_cast<int>(y1 - y0)});
+        return true;
+    }
+
+    /* The exported model has float32 NCHW input [1, 3, 192, 192] normalized
+     * to [0, 1].  The vendor preprocessor converts RGB to grayscale and is
+     * therefore not valid for this model. */
+    static bool PopulateCubeFaceInput(
+            const std::shared_ptr<arm::app::fwk::iface::TensorIface>& inputTensor,
+            const uint8_t* rgb,
+            size_t rgbBytes,
+            int inputImgCols,
+            int inputImgRows)
+    {
+        const size_t pixels = static_cast<size_t>(inputImgCols) * inputImgRows;
+        if (!inputTensor || !rgb || inputTensor->Type() != arm::app::fwk::iface::TensorType::FP32 ||
+            inputTensor->GetNumElements() != 3 * pixels || rgbBytes < 3 * pixels) {
+            printf_err("Unexpected cube-face YOLOv8 input tensor or frame\n");
+            return false;
+        }
+
+        auto* input = inputTensor->GetData<float>();
+        if (!input) {
+            printf_err("Invalid cube-face YOLOv8 input buffer\n");
+            return false;
+        }
+        constexpr float normalizer = 1.0f / 255.0f;
+        for (size_t pixel = 0; pixel < pixels; ++pixel) {
+            input[pixel] = rgb[3 * pixel] * normalizer;
+            input[pixels + pixel] = rgb[3 * pixel + 1] * normalizer;
+            input[2 * pixels + pixel] = rgb[3 * pixel + 2] * normalizer;
+        }
+        return true;
+    }
+
     /* Object detection inference handler. */
     bool ObjectDetectionHandler(ApplicationContext& ctx)
     {
@@ -168,30 +270,19 @@ using namespace arm::app::object_detection;
 
         auto inputTensor = model.GetInputTensor(0);
         auto outputTensor0 = model.GetOutputTensor(0);
-        auto outputTensor1 = model.GetOutputTensor(1);
         const auto inputShape = inputTensor->Shape();
         if (inputShape.empty()) {
             printf_err("Invalid input tensor dims\n");
             return false;
-        } else if (inputShape.size() < 3) {
-            printf_err("Input tensor dimension should be >= 3\n");
+        } else if (inputShape.size() != 4 || inputShape[0] != 1 || inputShape[1] != 3) {
+            printf_err("Cube-face YOLOv8 input must be [1,3,H,W]\n");
             return false;
         }
 
-        const int inputImgCols = inputShape[arm::app::fwk::tflm::YoloFastestModel::ms_inputColsIdx];
-        const int inputImgRows   = inputShape[arm::app::fwk::tflm::YoloFastestModel::ms_inputRowsIdx];
-
-        /* Set up pre and post-processing. */
-        DetectorPreProcess preProcess = DetectorPreProcess(inputTensor, true, model.IsDataSigned());
+        const int inputImgRows = inputShape[2];
+        const int inputImgCols = inputShape[3];
 
         std::vector<object_detection::DetectionResult> results;
-        const object_detection::PostProcessParams postProcessParams {
-            inputImgRows, inputImgCols, object_detection::originalImageSize,
-            object_detection::anchor1, object_detection::anchor2
-        };
-        DetectorPostProcess postProcess = DetectorPostProcess(outputTensor0, outputTensor1,
-                results, postProcessParams);
-
         /* Ensure there are no results leftover from previous inference when running all. */
         results.clear();
 
@@ -223,8 +314,6 @@ using namespace arm::app::object_detection;
             /* Camera preview buffer is full-panel RGB888 in LVGL byte order. */
             lv_obj_invalidate(ScreenLayoutImageObject());
 
-            const size_t copySz = inputTensor->Bytes();
-
 #if SHOW_INF_TIME
         uint32_t inf_prof = Get_SysTick_Cycle_Count32();
 #endif
@@ -234,7 +323,8 @@ using namespace arm::app::object_detection;
             BOARD_LED1_BLUE_Control(BOARD_LED_STATE_TOGGLE);
 #endif
             /* Run the pre-processing, inference and post-processing. */
-            if (!preProcess.DoPreProcess(currImage, copySz)) {
+            if (!PopulateCubeFaceInput(inputTensor, currImage, capturedFrameSize,
+                                       inputImgCols, inputImgRows)) {
                 printf_err("Pre-processing failed.");
                 return false;
             }
@@ -256,7 +346,7 @@ using namespace arm::app::object_detection;
             powerOk = powerOk && (power_measurement_end(&power) == 0);
 #endif
 
-            if (!postProcess.DoPostProcess()) {
+            if (!DecodeCubeFaceYoloV8(outputTensor0, inputImgCols, inputImgRows, results)) {
                 printf_err("Post-processing failed.");
                 return false;
             }
@@ -284,7 +374,6 @@ using namespace arm::app::object_detection;
 
 #if VERIFY_TEST_OUTPUT
         DumpTensor(modelOutput0);
-        DumpTensor(modelOutput1);
 #endif /* VERIFY_TEST_OUTPUT */
 
         if (!PresentInferenceResult(results)) {

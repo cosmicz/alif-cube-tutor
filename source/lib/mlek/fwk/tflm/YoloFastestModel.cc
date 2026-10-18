@@ -25,6 +25,10 @@ const tflite::MicroOpResolver& arm::app::fwk::tflm::YoloFastestModel::GetOpResol
 
 bool arm::app::fwk::tflm::YoloFastestModel::EnlistOperations()
 {
+    /* Vela keeps float input/output boundary conversions on the CPU for the
+     * cube-face YOLOv8 model; the convolution graph is delegated as ethos-u. */
+    this->m_opResolver.AddQuantize();
+    this->m_opResolver.AddDequantize();
 #ifndef ETHOS_U_NPU_ASSUMED
     this->m_opResolver.AddDepthwiseConv2D();
     this->m_opResolver.AddConv2D();

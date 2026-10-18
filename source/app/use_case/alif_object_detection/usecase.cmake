@@ -54,7 +54,10 @@ USER_OPTION(${use_case}_ANCHOR_2 "Second anchor array estimated during training.
     STRING)
 
 USER_OPTION(${use_case}_ACTIVATION_BUF_SZ "Activation buffer size for the chosen model"
-    0x00082000
+    # The U85-256 Vela report for the 192px cube-face model measures
+    # 771.52 KiB SRAM.  One MiB leaves 252 KiB of measured-model headroom
+    # while remaining inside the board's two-MiB Shared_Sram region.
+    0x00100000
     STRING)
 
 USER_OPTION(${use_case}_SHOW_INF_TIME "Show inference time"
