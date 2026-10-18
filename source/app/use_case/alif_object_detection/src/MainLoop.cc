@@ -1,6 +1,6 @@
 /* This file was ported to work on Alif Semiconductor devices. */
 
-/* Copyright (C) 2023 Alif Semiconductor - All Rights Reserved.
+/* Copyright (C) 2023, 2026 Alif Semiconductor - All Rights Reserved.
  * Use, distribution and modification of this code is permitted under the
  * terms stated in the Alif Semiconductor Software License Agreement
  *
@@ -11,7 +11,7 @@
  */
 
 /*
- * Copyright (c) 2022 Arm Limited. All rights reserved.
+ * Copyright (c) 2022, 2026 Arm Limited. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -54,11 +54,10 @@ void MainLoop()
     arm::app::fwk::iface::MemoryRegion computeMem{arm::app::tensorArena,
                                                   sizeof(arm::app::tensorArena)};
 
-    /* Load the model. */
-    if (!model.Init(computeMem, modelMem)) {
-        printf_err("Failed to initialise model\n");
-        return;
-    }
+    /* Keep the reference model linked, but CPU cube preview needs no model
+     * allocation, invocation, or NPU initialization. */
+    (void)modelMem;
+    (void)computeMem;
 
     if (!alif::app::ObjectDetectionInit(model)) {
         printf_err("Failed to initialise use case handler\n");

@@ -28,6 +28,10 @@
 #include "delay.h"
 #include <tgmath.h>
 #include <string.h>
+#include <stdio.h>
+#include "cube_preview.h"
+
+char cube_face_letters[10];
 
 #define CAMERA_PREVIEW_WIDTH  RTE_PANEL_HACTIVE_TIME
 #define CAMERA_PREVIEW_HEIGHT RTE_PANEL_VACTIVE_LINE
@@ -266,6 +270,9 @@ void camera_update_preview(const uint8_t* image,
             *dst++               = (red << 3) | (red >> 2);
         }
     }
+    cube_preview_read_and_draw(preview_image, CAMERA_PREVIEW_WIDTH,
+                               CAMERA_PREVIEW_HEIGHT, cube_face_letters);
+    printf("CUBE %s\n", cube_face_letters);
     /* Keep the full-panel source coherent for the display/DAVE2D reader. */
     SCB_CleanDCache_by_Addr((uint32_t*)preview_image, sizeof preview_image);
 }

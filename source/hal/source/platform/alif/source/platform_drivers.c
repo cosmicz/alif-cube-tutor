@@ -1,6 +1,6 @@
 /* This file was ported to work on Alif Semiconductor devices. */
 
-/* Copyright (C) 2022-2024 Alif Semiconductor - All Rights Reserved.
+/* Copyright (C) 2022-2024, 2026 Alif Semiconductor - All Rights Reserved.
  * Use, distribution and modification of this code is permitted under the
  * terms stated in the Alif Semiconductor Software License Agreement
  *
@@ -11,7 +11,7 @@
  */
 
 /*
- * Copyright (c) 2022 Arm Limited. All rights reserved.
+ * Copyright (c) 2022, 2026 Arm Limited. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -517,14 +517,10 @@ int platform_init(void)
 #endif
 
 #if defined(ARM_NPU)
-
-    int state;
-
-    /* If Arm Ethos-U NPU is to be used, we initialise it here */
-    if (0 != (state = arm_ethosu_npu_init())) {
-        return state;
-    }
-    NVIC_SetPriority((IRQn_Type)ETHOS_U_IRQN, 0x60);
+    /* The cube preview uses CPU RGB distances only. Avoid a stale NPU
+     * interrupt while starting this demo after the previous workload. */
+    NVIC_DisableIRQ((IRQn_Type)ETHOS_U_IRQN);
+    NVIC_ClearPendingIRQ((IRQn_Type)ETHOS_U_IRQN);
 
 #endif /* ARM_NPU */
 

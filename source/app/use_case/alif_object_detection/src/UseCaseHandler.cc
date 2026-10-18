@@ -260,6 +260,17 @@ using namespace arm::app::object_detection;
     /* Object detection inference handler. */
     bool ObjectDetectionHandler(ApplicationContext& ctx)
     {
+        hal_camera_start();
+        uint32_t cubeCapturedSize = 0;
+        if (!hal_camera_get_captured_frame(&cubeCapturedSize) || !cubeCapturedSize) {
+            return false;
+        }
+        {
+            ScopedLVGLLock lv_lock;
+            lv_obj_invalidate(ScreenLayoutImageObject());
+        }
+        return true;
+
         auto& profiler = ctx.Get<Profiler&>("profiler");
         auto& model = ctx.Get<Model&>("model");
 
@@ -294,6 +305,14 @@ using namespace arm::app::object_detection;
             printf_err("hal_camera_get_captured_frame failed");
             return false;
         }
+        /* Cube preview classification runs on the CPU before model cropping.
+         * Publish the updated preview and bypass model execution for this demo. */
+        {
+            ScopedLVGLLock lv_lock;
+            lv_obj_invalidate(ScreenLayoutImageObject());
+        }
+        return true;
+
         if (!firstCameraFrameReported) {
             uint8_t minPixel = 255;
             uint8_t maxPixel = 0;
