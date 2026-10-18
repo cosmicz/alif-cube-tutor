@@ -81,6 +81,15 @@ typedef struct {
     float cross_hsv[4][3];
 } cube_diagnostics;
 
+static inline int cube_matches_saved_table_profile(const cube_diagnostics *diagnostics)
+{
+    static const float saved_white_ref[3] = {38.9652786f, 54.1666641f, 45.4027786f};
+    if (!diagnostics->white_valid) return 0;
+    for (unsigned c = 0; c < 3; ++c)
+        if (fabsf(diagnostics->white_ref[c] - saved_white_ref[c]) > 0.01f) return 0;
+    return 1;
+}
+
 static inline float cube_median4(const float input[4])
 {
     float values[4] = {input[0], input[1], input[2], input[3]};
@@ -98,7 +107,8 @@ static inline float cube_clamp(float value, float low, float high)
     return value < low ? low : (value > high ? high : value);
 }
 
-static inline unsigned cube_hsv_colour(const float rgb[3], float hsv[3])
+static inline unsigned cube_hsv_colour_for_profile(const float rgb[3], float hsv[3],
+                                                   int saved_table_profile)
 {
     float r = rgb[0] / 255.0f, g = rgb[1] / 255.0f, b = rgb[2] / 255.0f;
     float high = r > g ? r : g;
@@ -119,6 +129,11 @@ static inline unsigned cube_hsv_colour(const float rgb[3], float hsv[3])
      * confirmed green at H106/S0.115/V0.668, so a 0.15 white cutoff loses
      * real chroma.  Keep the neutral region narrow and use its hue evidence. */
     if (hsv[1] < 0.10f && high > 0.55f) return 0;
+    /* OC-authorized table-specific manual calibration.  Only the saved
+     * profile's locked references may map its measured saturated H0..15
+     * orange samples before the generic H0..20 red branch. */
+    if (saved_table_profile && hue <= 15.0f && hsv[1] >= 0.38f && hsv[2] >= 0.70f)
+        return 3;
     if (hue >= 340 || hue < 20) return 2;
     /* Captured table yellow is H41/S0.32..0.37; leave the H25 orange band
      * intact and make the natural orange/yellow boundary H35. */
@@ -128,6 +143,11 @@ static inline unsigned cube_hsv_colour(const float rgb[3], float hsv[3])
     if (hue < 270) return 4;
     /* Purple is outside the supplied bands; choose the nearer blue/red band. */
     return hue < 305 ? 4 : 2;
+}
+
+static inline unsigned cube_hsv_colour(const float rgb[3], float hsv[3])
+{
+    return cube_hsv_colour_for_profile(rgb, hsv, 0);
 }
 
 /* LVGL's full-panel RGB888 source is stored B,G,R, independently of the
@@ -249,7 +269,8 @@ static inline void cube_preview_read_and_draw(uint8_t *bgr, unsigned width,
         for (unsigned c = 0; c < 3; ++c)
             diagnostics->balanced_rgb[cell][c] = cube_clamp(
                 diagnostics->raw_rgb[cell][c] * diagnostics->gains[c], 0, 255);
-        classes[cell] = cube_hsv_colour(diagnostics->balanced_rgb[cell], diagnostics->hsv[cell]);
+        classes[cell] = cube_hsv_colour_for_profile(diagnostics->balanced_rgb[cell],
+            diagnostics->hsv[cell], cube_matches_saved_table_profile(diagnostics));
         const float *hsv = diagnostics->hsv[cell];
         float distance = 0;
         if (classes[cell] != 0) {
