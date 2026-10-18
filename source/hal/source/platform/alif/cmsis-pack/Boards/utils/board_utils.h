@@ -42,6 +42,8 @@ void BOARD_BUTTON1_Control(BOARD_BUTTON_CONTROL control);
 void BOARD_BUTTON2_Control(BOARD_BUTTON_CONTROL control);
 void BOARD_BUTTON1_GetState(BOARD_BUTTON_STATE *state);
 void BOARD_BUTTON2_GetState(BOARD_BUTTON_STATE *state);
+/* Active-low joystick contacts A,B,C,D,CENTER in bits 0..4; excludes reset/power. */
+uint32_t BOARD_JOYSTICK_GetPressedMask(void);
 void BOARD_LED1_Control(BOARD_LED_STATE state);
 void BOARD_LED2_Control(BOARD_LED_STATE state);
 #ifdef GPIO_PROFILING

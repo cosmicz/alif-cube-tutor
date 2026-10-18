@@ -23,11 +23,26 @@
 
 extern ARM_DRIVER_GPIO ARM_Driver_GPIO_(BOARD_JOY_SW_D_GPIO_PORT);
 extern ARM_DRIVER_GPIO ARM_Driver_GPIO_(BOARD_JOY_SW_CENTER_GPIO_PORT);
+extern ARM_DRIVER_GPIO ARM_Driver_GPIO_(BOARD_JOY_SW_A_GPIO_PORT);
+extern ARM_DRIVER_GPIO ARM_Driver_GPIO_(BOARD_JOY_SW_B_GPIO_PORT);
+extern ARM_DRIVER_GPIO ARM_Driver_GPIO_(BOARD_JOY_SW_C_GPIO_PORT);
 extern ARM_DRIVER_GPIO ARM_Driver_GPIO_(BOARD_LEDRGB0_R_GPIO_PORT);
 extern ARM_DRIVER_GPIO ARM_Driver_GPIO_(LED_G_PORT);
 #ifdef GPIO_PROFILING
 extern ARM_DRIVER_GPIO ARM_Driver_GPIO_(BOARD_LEDRGB0_B_GPIO_PORT);
 #endif
+
+static ARM_DRIVER_GPIO *const joystick_gpio[5] = {
+    &ARM_Driver_GPIO_(BOARD_JOY_SW_A_GPIO_PORT),
+    &ARM_Driver_GPIO_(BOARD_JOY_SW_B_GPIO_PORT),
+    &ARM_Driver_GPIO_(BOARD_JOY_SW_C_GPIO_PORT),
+    &ARM_Driver_GPIO_(BOARD_JOY_SW_D_GPIO_PORT),
+    &ARM_Driver_GPIO_(BOARD_JOY_SW_CENTER_GPIO_PORT)
+};
+static const uint32_t joystick_pin[5] = {
+    BOARD_JOY_SW_A_GPIO_PIN, BOARD_JOY_SW_B_GPIO_PIN, BOARD_JOY_SW_C_GPIO_PIN,
+    BOARD_JOY_SW_D_GPIO_PIN, BOARD_JOY_SW_CENTER_GPIO_PIN
+};
 
 void BOARD_UTILS_Init()
 {
@@ -46,6 +61,14 @@ void BOARD_UTILS_Init()
     BOARD_BUTTON2_GPIOdrv->Initialize(BOARD_JOY_SW_CENTER_GPIO_PIN, NULL);
     BOARD_BUTTON2_GPIOdrv->PowerControl(BOARD_JOY_SW_CENTER_GPIO_PIN, ARM_POWER_FULL);
     BOARD_BUTTON2_GPIOdrv->SetDirection(BOARD_JOY_SW_CENTER_GPIO_PIN, GPIO_PIN_DIRECTION_INPUT);
+
+    /* D/CENTER retain their existing initialization and public button APIs.
+     * Initialize the other three contacts using the board's own pin IDs. */
+    for (unsigned i = 0; i < 3; ++i) {
+        joystick_gpio[i]->Initialize(joystick_pin[i], NULL);
+        joystick_gpio[i]->PowerControl(joystick_pin[i], ARM_POWER_FULL);
+        joystick_gpio[i]->SetDirection(joystick_pin[i], GPIO_PIN_DIRECTION_INPUT);
+    }
 
 #ifdef GPIO_PROFILING
     BOARD_LED1_BLUE_GPIOdrv->Initialize(BOARD_LEDRGB0_B_GPIO_PIN, NULL);
@@ -69,6 +92,17 @@ void BOARD_BUTTON1_Init(BOARD_Callback_t user_cb)
 {
 	ARM_DRIVER_GPIO *BOARD_BUTTON1_GPIOdrv = &ARM_Driver_GPIO_(BOARD_JOY_SW_D_GPIO_PORT);
 	BOARD_BUTTON1_GPIOdrv->Initialize(BOARD_JOY_SW_D_GPIO_PIN, (ARM_GPIO_SignalEvent_t)user_cb);
+}
+
+uint32_t BOARD_JOYSTICK_GetPressedMask(void)
+{
+    uint32_t mask = 0;
+    for (unsigned i = 0; i < 5; ++i) {
+        uint32_t value = BOARD_BUTTON_STATE_HIGH;
+        if (joystick_gpio[i]->GetValue(joystick_pin[i], &value) == ARM_DRIVER_OK &&
+            value == BOARD_BUTTON_STATE_LOW) mask |= 1u << i;
+    }
+    return mask;
 }
 
 void BOARD_BUTTON2_Init(BOARD_Callback_t user_cb)

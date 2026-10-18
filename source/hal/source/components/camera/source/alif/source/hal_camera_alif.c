@@ -31,6 +31,7 @@
 #include <stdio.h>
 #include "cube_preview.h"
 #include "cube_camera_mapping.h"
+#include "cube_button_actions.h"
 
 char cube_face_letters[10];
 cube_diagnostics cube_read_diagnostics = {.mode = 1};
@@ -41,7 +42,7 @@ const char *cube_calibration_status(void)
 {
     if (!cube_read_diagnostics.mode) {
         snprintf(cube_status_text, sizeof cube_status_text,
-                 "%sSHOW WHITE CROSS\nPRESS DOWN TO LOCK\nRGB %.0f %.0f %.0f | WB: %s",
+                 "%sSHOW WHITE CROSS\nANY BUTTON TO LOCK\nRGB %.0f %.0f %.0f | WB: %s",
                  cube_read_diagnostics.lock_rejected ? "CROSS NOT WHITE\n" : "",
                  (double)cube_read_diagnostics.candidate_rgb[0],
                  (double)cube_read_diagnostics.candidate_rgb[1],
@@ -50,33 +51,20 @@ const char *cube_calibration_status(void)
         return cube_status_text;
     }
     if (cube_read_diagnostics.abstain_count >= 5)
-        return cube_read_diagnostics.white_valid ? "NO CUBE\nWB: locked" : "NO CUBE\nWB: auto";
-    return cube_read_diagnostics.white_valid ? "READ\nWB: locked\nDOWN: CALIBRATE" : "READ\nWB: auto\nDOWN: CALIBRATE";
+        return cube_read_diagnostics.white_valid ? "NO CUBE | WB: locked\nPRESS ANY BUTTON" : "NO CUBE | WB: auto\nPRESS ANY BUTTON";
+    return cube_read_diagnostics.white_valid ? "READ\nWB: locked\nPRESS ANY BUTTON" : "READ\nWB: auto\nPRESS ANY BUTTON";
 }
 
 int cube_center_is_logo(void) { return (cube_read_diagnostics.logo_mask & 16) != 0; }
 
 static uint32_t cube_button_request(uint32_t now_ms)
 {
-    static uint32_t down_since;
-    static bool down_before, long_sent;
-    BOARD_BUTTON_STATE state = BOARD_BUTTON_STATE_HIGH;
-    BOARD_BUTTON1_GetState(&state);
-    bool down = state == BOARD_BUTTON_STATE_LOW;
+    static cube_button_state state;
+    uint32_t physical_request = cube_button_action(&state,
+        BOARD_JOYSTICK_GetPressedMask(), now_ms, cube_read_diagnostics.mode);
     uint32_t request = cube_calibration_request;
     cube_calibration_request = 0;
-    if (down && !down_before) {
-        down_since = now_ms;
-        long_sent = false;
-    }
-    if (down && !long_sent && (uint32_t)(now_ms - down_since) >= 1500) {
-        request = 2;
-        long_sent = true;
-    }
-    if (!down && down_before && !long_sent && (uint32_t)(now_ms - down_since) >= 50)
-        request = cube_read_diagnostics.mode == 0 ? 1 : 2;
-    down_before = down;
-    return request;
+    return request ? request : physical_request;
 }
 
 #include "cube_display_geometry.h"
