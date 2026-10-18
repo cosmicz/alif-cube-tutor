@@ -30,6 +30,7 @@
 #include <string.h>
 #include <stdio.h>
 #include "cube_preview.h"
+#include "cube_camera_mapping.h"
 
 char cube_face_letters[10];
 cube_diagnostics cube_read_diagnostics = {.mode = 1};
@@ -278,34 +279,23 @@ void camera_update_preview(const uint8_t* image,
                            uint32_t height,
                            uint32_t pixel_bytes)
 {
-    /* Center-crop to fill the panel without stretching. Read the original
-     * sensor stride directly, before model preprocessing crops it in place.
-     * Preserve the DevKit mounting correction; AppKit uses native orientation. */
-    const uint32_t crop_width     = width * CAMERA_PREVIEW_HEIGHT > height * CAMERA_PREVIEW_WIDTH
-                                        ? height * CAMERA_PREVIEW_WIDTH / CAMERA_PREVIEW_HEIGHT
-                                        : width;
-    const uint32_t crop_height    = width * CAMERA_PREVIEW_HEIGHT > height * CAMERA_PREVIEW_WIDTH
-                                        ? height
-                                        : width * CAMERA_PREVIEW_HEIGHT / CAMERA_PREVIEW_WIDTH;
-    const uint32_t x_origin       = (width - crop_width) / 2;
-    const uint32_t y_origin       = (height - crop_height) / 2;
+    /* Rotate only the camera source clockwise before landscape centre-crop
+     * and the existing logical horizontal mirror. Sampling, WB, overlays and
+     * LVGL's display/text rotation remain downstream and unchanged. */
     const uint16_t* sensor_pixels = (const uint16_t*)image;
     for (uint32_t y = 0; y < CAMERA_PREVIEW_HEIGHT; ++y) {
-        const uint32_t sy = y_origin + y * crop_height / CAMERA_PREVIEW_HEIGHT;
         uint8_t* dst      = preview_image + y * CAMERA_PREVIEW_WIDTH * RGB_BYTES;
         for (uint32_t x = 0; x < CAMERA_PREVIEW_WIDTH; ++x) {
-            const uint32_t column = x * crop_width / CAMERA_PREVIEW_WIDTH;
-            /* Mirror the LCD source before sampling/overlays: selfie view and
-             * classified swatches share exactly the same display coordinates. */
-            const uint32_t sx = x_origin + crop_width - 1 - column;
+            const uint32_t source_index = cube_camera_source_index(width, height,
+                CAMERA_PREVIEW_WIDTH, CAMERA_PREVIEW_HEIGHT, x, y);
             if (pixel_bytes == RGB_BYTES) {
-                const uint8_t* src = image + (sy * width + sx) * RGB_BYTES;
+                const uint8_t* src = image + source_index * RGB_BYTES;
                 *dst++             = src[2];
                 *dst++             = src[1];
                 *dst++             = src[0];
                 continue;
             }
-            const uint16_t pixel = sensor_pixels[sy * width + sx];
+            const uint16_t pixel = sensor_pixels[source_index];
             const uint8_t blue   = pixel & 0x1f;
             const uint8_t green  = (pixel >> 5) & 0x3f;
             const uint8_t red    = (pixel >> 11) & 0x1f;
