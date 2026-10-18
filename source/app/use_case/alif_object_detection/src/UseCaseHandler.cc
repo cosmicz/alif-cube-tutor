@@ -30,6 +30,7 @@
 #include "CubeFaceYoloV8.hpp"
 #include "CubeFaceMultiSelect.hpp"
 #include "cube_cross_hint.h"
+#include "cube_face_memory.h"
 #include "UseCaseCommonUtils.hpp"
 #include "mlek/fwk/tflm/YoloFastestModel.hpp"
 #include "mlek/log/log_macros.h"
@@ -64,6 +65,88 @@ namespace {
 lv_style_t boxStyle;
 bool firstCameraFrameReported = false;
 lv_obj_t *cubeStatusLabel = nullptr;
+lv_obj_t *cubeMemoryLabel = nullptr;   /* top line: faces remembered, then white-cross progress */
+cube_face_memory faceMemory{};
+
+/* Wireframe cube guide over the largest detected face (arc-fdo1, 2026-10-18): an oblique cube
+ * anchored to the detected square, its 3x3 grid, and one arrow toward the face to show next. */
+struct FaceRect { int left, top, width, height; bool valid; };
+FaceRect largestFace{};
+lv_obj_t *wireFront = nullptr, *wireBack = nullptr, *wireArrow = nullptr;
+lv_obj_t *wireEdge[3] = {};
+lv_obj_t *wireGrid[4] = {};
+lv_point_precise_t wireFrontPts[6], wireBackPts[5], wireEdgePts[3][2], wireGridPts[4][2], wireArrowPts[5];
+
+lv_obj_t *CreateWireLine(uint32_t colour, int width)
+{
+    lv_obj_t *line = lv_line_create(lv_layer_top());
+    lv_obj_set_pos(line, 0, 0);
+    lv_obj_set_style_line_width(line, width, 0);
+    lv_obj_set_style_line_color(line, lv_color_hex(colour), 0);
+    lv_obj_set_style_line_rounded(line, true, 0);
+    lv_obj_add_flag(line, LV_OBJ_FLAG_HIDDEN);
+    return line;
+}
+
+void CreateWireframe()
+{
+    wireFront = CreateWireLine(0xFFD166, 3);
+    wireBack = CreateWireLine(0xFFD166, 2);
+    for (auto& edge : wireEdge) edge = CreateWireLine(0xFFD166, 2);
+    for (auto& grid : wireGrid) grid = CreateWireLine(0xFFFFFF, 2);
+    wireArrow = CreateWireLine(0x4DD0E1, 5);
+}
+
+void ShowWire(lv_obj_t *line, lv_point_precise_t *pts, uint32_t count, bool show)
+{
+    if (!line) return;
+    if (!show) { lv_obj_add_flag(line, LV_OBJ_FLAG_HIDDEN); return; }
+    lv_line_set_points(line, pts, count);
+    lv_obj_remove_flag(line, LV_OBJ_FLAG_HIDDEN);
+}
+
+/* direction: 0 none, 1 face above, 2 face below, 3 face beside (cube_cross_hint_direction). */
+void DrawCubeWireframe(int direction)
+{
+    if (!largestFace.valid) {
+        ShowWire(wireFront, nullptr, 0, false); ShowWire(wireBack, nullptr, 0, false);
+        for (auto edge : wireEdge) ShowWire(edge, nullptr, 0, false);
+        for (auto grid : wireGrid) ShowWire(grid, nullptr, 0, false);
+        ShowWire(wireArrow, nullptr, 0, false);
+        return;
+    }
+    const auto cx = [](int x) { return (lv_value_precise_t)std::clamp(x, 0, (int)CUBE_PREVIEW_WIDTH - 1); };
+    const auto cy = [](int y) { return (lv_value_precise_t)std::clamp(y, 0, (int)CUBE_PREVIEW_HEIGHT - 1); };
+    const int left = largestFace.left, top = largestFace.top;
+    const int right = left + largestFace.width, bottom = top + largestFace.height;
+    const int depth = std::max(12, std::min(largestFace.width, largestFace.height) * 3 / 10);
+    const int f[4][2] = {{left, top}, {right, top}, {right, bottom}, {left, bottom}};
+    const int b[4][2] = {{left + depth, top - depth}, {right + depth, top - depth},
+                         {right + depth, bottom - depth}, {left + depth, bottom - depth}};
+    for (int i = 0; i < 5; ++i) { wireFrontPts[i] = {cx(f[i % 4][0]), cy(f[i % 4][1])}; wireBackPts[i] = {cx(b[i % 4][0]), cy(b[i % 4][1])}; }
+    wireFrontPts[5] = {cx(b[0][0]), cy(b[0][1])};  /* front square closed, then the F0-B0 edge */
+    for (int i = 0; i < 3; ++i) { wireEdgePts[i][0] = {cx(f[i + 1][0]), cy(f[i + 1][1])}; wireEdgePts[i][1] = {cx(b[i + 1][0]), cy(b[i + 1][1])}; }
+    for (int i = 0; i < 2; ++i) {
+        const int gx = left + largestFace.width * (i + 1) / 3, gy = top + largestFace.height * (i + 1) / 3;
+        wireGridPts[i][0] = {cx(gx), cy(top)}; wireGridPts[i][1] = {cx(gx), cy(bottom)};
+        wireGridPts[i + 2][0] = {cx(left), cy(gy)}; wireGridPts[i + 2][1] = {cx(right), cy(gy)};
+    }
+    ShowWire(wireFront, wireFrontPts, 6, true); ShowWire(wireBack, wireBackPts, 5, true);
+    for (int i = 0; i < 3; ++i) ShowWire(wireEdge[i], wireEdgePts[i], 2, true);
+    for (int i = 0; i < 4; ++i) ShowWire(wireGrid[i], wireGridPts[i], 2, true);
+    const int midX = (left + right) / 2, midY = (top + bottom) / 2, reach = depth + 28;
+    int sx, sy, tx, ty, wx, wy;
+    switch (direction) {
+        case 1: sx = midX; sy = top + largestFace.height / 4; tx = midX; ty = top - reach; wx = 14; wy = 18; break;
+        case 2: sx = midX; sy = bottom - largestFace.height / 4; tx = midX; ty = bottom + reach; wx = 14; wy = -18; break;
+        case 3: sx = right - largestFace.width / 4; sy = midY; tx = right + reach; ty = midY; wx = -18; wy = 14; break;
+        default: ShowWire(wireArrow, nullptr, 0, false); return;
+    }
+    wireArrowPts[0] = {cx(sx), cy(sy)}; wireArrowPts[1] = {cx(tx), cy(ty)};
+    if (direction == 3) { wireArrowPts[2] = {cx(tx + wx), cy(ty - wy)}; wireArrowPts[3] = {cx(tx), cy(ty)}; wireArrowPts[4] = {cx(tx + wx), cy(ty + wy)}; }
+    else { wireArrowPts[2] = {cx(tx - wx), cy(ty + wy)}; wireArrowPts[3] = {cx(tx), cy(ty)}; wireArrowPts[4] = {cx(tx + wx), cy(ty + wy)}; }
+    ShowWire(wireArrow, wireArrowPts, 5, true);
+}
 };
 
 using arm::app::Profiler;
@@ -127,7 +210,18 @@ using namespace arm::app::object_detection;
         lv_obj_set_style_text_align(cubeStatusLabel, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_width(cubeStatusLabel, PREVIEW_X);
         lv_obj_set_pos(cubeStatusLabel, 0, CUBE_STATUS_Y);
-        lv_label_set_text(cubeStatusLabel, "CPU RAW: waiting for face");
+        lv_label_set_text(cubeStatusLabel, "NPU box | CPU colours: waiting for a face");
+        cubeMemoryLabel = lv_label_create(lv_layer_top());
+        lv_obj_set_style_text_color(cubeMemoryLabel, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_set_style_bg_color(cubeMemoryLabel, lv_color_hex(0x000000), 0);
+        lv_obj_set_style_bg_opa(cubeMemoryLabel, LV_OPA_70, 0);
+        lv_obj_set_style_pad_all(cubeMemoryLabel, 6, 0);
+        lv_obj_set_style_text_align(cubeMemoryLabel, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_width(cubeMemoryLabel, PREVIEW_X);
+        lv_obj_set_pos(cubeMemoryLabel, 0, 4);
+        cube_face_memory_reset(&faceMemory);
+        lv_label_set_text(cubeMemoryLabel, "FACES SEEN 0/6 - HOLD WHITE ON TOP");
+        CreateWireframe();
         lv_port_unlock(lv_lock_state);
 
         /* Initialise the camera */
@@ -277,19 +371,21 @@ using namespace arm::app::object_detection;
         return true;
     }
 
-    /* CPU CAL reuses the accepted white-cross calibration.  It never invokes a
+    /* NPU box | CPU colours reuses the accepted white-cross calibration.  It never invokes a
      * PTE: the model only supplies the ROI that is sampled by the CPU reader. */
     static void UpdateCpuNineCellReadout(const uint8_t* rgb, size_t rgbBytes,
                                          int width, int height,
                                          const std::vector<object_detection::DetectionResult>& results)
     {
         if (!cubeStatusLabel || !rgb || rgbBytes < static_cast<size_t>(width) * height * 3) {
-            if (cubeStatusLabel) lv_label_set_text(cubeStatusLabel, "CPU CAL: camera unavailable");
+            DrawCubeWireframe(0);
+            if (cubeStatusLabel) lv_label_set_text(cubeStatusLabel, "NPU box | CPU colours: camera unavailable");
             return;
         }
         if (results.empty()) {
-            if (hal_camera_cube_is_read_mode()) lv_label_set_text(cubeStatusLabel, "CPU CAL: no face");
-            else lv_label_set_text_fmt(cubeStatusLabel, "CPU CAL: %s", hal_camera_cube_status());
+            DrawCubeWireframe(0);
+            if (hal_camera_cube_is_read_mode()) lv_label_set_text(cubeStatusLabel, "NPU box | CPU colours: no face");
+            else lv_label_set_text_fmt(cubeStatusLabel, "NPU box | CPU colours: %s", hal_camera_cube_status());
             return;
         }
         /* Up to three faces, largest first; the tutoring cue follows the largest face read. */
@@ -312,12 +408,20 @@ using namespace arm::app::object_detection;
             ++shown;
         }
         if (shown == 0) {
-            lv_label_set_text_fmt(cubeStatusLabel, "CPU CAL: %s", hal_camera_cube_status());
+            lv_label_set_text_fmt(cubeStatusLabel, "NPU box | CPU colours: %s", hal_camera_cube_status());
+            DrawCubeWireframe(0);
             return;
         }
         char hint[CUBE_CROSS_HINT_LEN];
         cube_cross_hint(first, hint, sizeof hint);
-        lv_label_set_text_fmt(cubeStatusLabel, "CPU CAL: %s\n%s", label, hint);
+        lv_label_set_text_fmt(cubeStatusLabel, "NPU box | CPU colours: %s\n%s", label, hint);
+        DrawCubeWireframe(cube_cross_hint_direction(first));
+        /* Remember this face by its centre; the top line then tracks the whole cube. */
+        if (cube_face_memory_update(&faceMemory, first) >= 0 && cubeMemoryLabel) {
+            char memory[CUBE_MEMORY_LINE_LEN];
+            cube_face_memory_line(&faceMemory, memory, sizeof memory);
+            lv_label_set_text(cubeMemoryLabel, memory);
+        }
     }
 
     /* Object detection inference handler. */
@@ -496,6 +600,7 @@ using namespace arm::app::object_detection;
         const float holderHeight  = (float)lv_obj_get_content_height(frame);
 
         DeleteBoxes(frame);
+        largestFace.valid = false;
 
         for (const auto& result: results) {
             const auto first = cube_camera_model_to_preview(
@@ -509,11 +614,11 @@ using namespace arm::app::object_detection;
             const float right = std::min((float)PREVIEW_X, std::max(first.x, last.x));
             const float bottom = std::min((float)PREVIEW_Y, std::max(first.y, last.y));
             if (right <= left || bottom <= top) continue;
-            CreateBox(frame,
-                      floor(left * holderWidth / PREVIEW_X),
-                      floor(top * holderHeight / PREVIEW_Y),
-                      ceil((right - left) * holderWidth / PREVIEW_X),
-                      ceil((bottom - top) * holderHeight / PREVIEW_Y));
+            const int boxLeft = floor(left * holderWidth / PREVIEW_X), boxTop = floor(top * holderHeight / PREVIEW_Y);
+            const int boxWidth = ceil((right - left) * holderWidth / PREVIEW_X);
+            const int boxHeight = ceil((bottom - top) * holderHeight / PREVIEW_Y);
+            if (!largestFace.valid) largestFace = {boxLeft, boxTop, boxWidth, boxHeight, true};  /* results are largest first */
+            CreateBox(frame, boxLeft, boxTop, boxWidth, boxHeight);
         }
     }
 
