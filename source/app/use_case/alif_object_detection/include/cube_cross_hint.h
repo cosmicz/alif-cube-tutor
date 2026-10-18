@@ -61,15 +61,4 @@ static inline int cube_cross_hint(const char letters[9], char *out, size_t out_l
     return whites;
 }
 
-/* Where a visible white edge sticker's partner is: 0 none (no arrow), 1 the face above the shown
- * face, 2 the face below, 3 a face beside it.  Rows/sides are as the camera sees the face. */
-static inline int cube_cross_hint_direction(const char letters[9])
-{
-    const char centre = letters[4];
-    if (!cube_cross_is_colour(centre) || centre == 'W' || centre == 'Y') return 0;
-    if (letters[1] == 'W') return 1;
-    if (letters[3] == 'W' || letters[5] == 'W') return 3;
-    if (letters[7] == 'W') return 2;
-    return 0;  /* nothing to point at: no white edge sticker on this face */
-}
 #endif
