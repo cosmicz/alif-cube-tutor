@@ -115,7 +115,9 @@ static inline unsigned cube_hsv_colour(const float rgb[3], float hsv[3])
     hsv[0] = hue;
     hsv[1] = high > 0 ? delta / high : 0;
     hsv[2] = high;
-    if (hsv[1] < 0.35f && high > 0.55f) return 0;
+    /* Captured neutral whites have S~0..0.03; the former 0.35 threshold
+     * swallowed confirmed red at H346/S0.349. Preserve chromatic hue evidence. */
+    if (hsv[1] < 0.15f && high > 0.55f) return 0;
     if (hue >= 340 || hue < 20) return 2;
     if (hue < 45) return 3;
     if (hue < 75) return 1;
