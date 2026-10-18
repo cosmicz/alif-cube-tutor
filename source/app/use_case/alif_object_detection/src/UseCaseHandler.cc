@@ -30,6 +30,7 @@
 #include "CubeFaceYoloV8.hpp"
 #include "CubeFaceMultiSelect.hpp"
 #include "cube_cross_hint.h"
+#include "cube_face_memory.h"
 #include "UseCaseCommonUtils.hpp"
 #include "mlek/fwk/tflm/YoloFastestModel.hpp"
 #include "mlek/log/log_macros.h"
@@ -64,6 +65,9 @@ namespace {
 lv_style_t boxStyle;
 bool firstCameraFrameReported = false;
 lv_obj_t *cubeStatusLabel = nullptr;
+lv_obj_t *cubeMemoryLabel = nullptr;   /* top line: faces remembered, then white-cross progress */
+cube_face_memory faceMemory{};
+
 };
 
 using arm::app::Profiler;
@@ -127,7 +131,17 @@ using namespace arm::app::object_detection;
         lv_obj_set_style_text_align(cubeStatusLabel, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_width(cubeStatusLabel, PREVIEW_X);
         lv_obj_set_pos(cubeStatusLabel, 0, CUBE_STATUS_Y);
-        lv_label_set_text(cubeStatusLabel, "CPU RAW: waiting for face");
+        lv_label_set_text(cubeStatusLabel, "NPU box | CPU colours: waiting for a face");
+        cubeMemoryLabel = lv_label_create(lv_layer_top());
+        lv_obj_set_style_text_color(cubeMemoryLabel, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_set_style_bg_color(cubeMemoryLabel, lv_color_hex(0x000000), 0);
+        lv_obj_set_style_bg_opa(cubeMemoryLabel, LV_OPA_70, 0);
+        lv_obj_set_style_pad_all(cubeMemoryLabel, 6, 0);
+        lv_obj_set_style_text_align(cubeMemoryLabel, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_width(cubeMemoryLabel, PREVIEW_X);
+        lv_obj_set_pos(cubeMemoryLabel, 0, 4);
+        cube_face_memory_reset(&faceMemory);
+        lv_label_set_text(cubeMemoryLabel, "FACES SEEN 0/6 - HOLD WHITE ON TOP");
         lv_port_unlock(lv_lock_state);
 
         /* Initialise the camera */
@@ -277,19 +291,19 @@ using namespace arm::app::object_detection;
         return true;
     }
 
-    /* CPU CAL reuses the accepted white-cross calibration.  It never invokes a
+    /* NPU box | CPU colours reuses the accepted white-cross calibration.  It never invokes a
      * PTE: the model only supplies the ROI that is sampled by the CPU reader. */
     static void UpdateCpuNineCellReadout(const uint8_t* rgb, size_t rgbBytes,
                                          int width, int height,
                                          const std::vector<object_detection::DetectionResult>& results)
     {
         if (!cubeStatusLabel || !rgb || rgbBytes < static_cast<size_t>(width) * height * 3) {
-            if (cubeStatusLabel) lv_label_set_text(cubeStatusLabel, "CPU CAL: camera unavailable");
+            if (cubeStatusLabel) lv_label_set_text(cubeStatusLabel, "NPU box | CPU colours: camera unavailable");
             return;
         }
         if (results.empty()) {
-            if (hal_camera_cube_is_read_mode()) lv_label_set_text(cubeStatusLabel, "CPU CAL: no face");
-            else lv_label_set_text_fmt(cubeStatusLabel, "CPU CAL: %s", hal_camera_cube_status());
+            if (hal_camera_cube_is_read_mode()) lv_label_set_text(cubeStatusLabel, "NPU box | CPU colours: no face");
+            else lv_label_set_text_fmt(cubeStatusLabel, "NPU box | CPU colours: %s", hal_camera_cube_status());
             return;
         }
         /* Up to three faces, largest first; the tutoring cue follows the largest face read. */
@@ -312,12 +326,18 @@ using namespace arm::app::object_detection;
             ++shown;
         }
         if (shown == 0) {
-            lv_label_set_text_fmt(cubeStatusLabel, "CPU CAL: %s", hal_camera_cube_status());
+            lv_label_set_text_fmt(cubeStatusLabel, "NPU box | CPU colours: %s", hal_camera_cube_status());
             return;
         }
         char hint[CUBE_CROSS_HINT_LEN];
         cube_cross_hint(first, hint, sizeof hint);
-        lv_label_set_text_fmt(cubeStatusLabel, "CPU CAL: %s\n%s", label, hint);
+        lv_label_set_text_fmt(cubeStatusLabel, "NPU box | CPU colours: %s\n%s", label, hint);
+        /* Remember this face by its centre; the top line then tracks the whole cube. */
+        if (cube_face_memory_update(&faceMemory, first) >= 0 && cubeMemoryLabel) {
+            char memory[CUBE_MEMORY_LINE_LEN];
+            cube_face_memory_line(&faceMemory, memory, sizeof memory);
+            lv_label_set_text(cubeMemoryLabel, memory);
+        }
     }
 
     /* Object detection inference handler. */
@@ -496,7 +516,6 @@ using namespace arm::app::object_detection;
         const float holderHeight  = (float)lv_obj_get_content_height(frame);
 
         DeleteBoxes(frame);
-
         for (const auto& result: results) {
             const auto first = cube_camera_model_to_preview(
                 CIMAGE_X, CIMAGE_Y, PREVIEW_X, PREVIEW_Y, imgInputCols,

@@ -36,9 +36,13 @@ were demonstrated on the E8. The operator accepted the table calibration on
 October 18, 2026. That named profile is compiled into startup; later
 button-triggered recalibration is runtime-only.
 
-Accepted firmware source: `cae1a9bf392177d4660361ae6ff4a87ba74f1e18`.
+Current firmware source: `2c2e56e593c71afd88446dfa6621015f8463218b`.
 AXF SHA-256:
-`42607084c72c512379d3eaef14bcb9f7f7c93ec6c84cc2de7b4dc794bdb46fc9`.
+`e97290ad2187b72944c37248ec01b61d4314bd9c514e13d3ab0e8bef0b069894`.
+
+The current display uses ordinary detection bounding boxes, colour labels
+and face memory. The experimental 3D wireframe and arrow overlay was removed;
+the detector and saved table calibration are unchanged.
 
 This is a perception-and-feedback prototype, **not a complete cube solver**.
 Six-face state reconstruction and visual move verification are next.
