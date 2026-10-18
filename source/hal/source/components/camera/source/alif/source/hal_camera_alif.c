@@ -32,6 +32,7 @@
 #include "cube_preview.h"
 
 char cube_face_letters[10];
+cube_diagnostics cube_read_diagnostics;
 
 #define CAMERA_PREVIEW_WIDTH  RTE_PANEL_HACTIVE_TIME
 #define CAMERA_PREVIEW_HEIGHT RTE_PANEL_VACTIVE_LINE
@@ -271,8 +272,19 @@ void camera_update_preview(const uint8_t* image,
         }
     }
     cube_preview_read_and_draw(preview_image, CAMERA_PREVIEW_WIDTH,
-                               CAMERA_PREVIEW_HEIGHT, cube_face_letters);
-    printf("CUBE %s\n", cube_face_letters);
+                               CAMERA_PREVIEW_HEIGHT, cube_face_letters,
+                               &cube_read_diagnostics);
+    printf("CUBE raw=%s balanced=%s\n", cube_read_diagnostics.raw_letters,
+           cube_read_diagnostics.balanced_letters);
+    if (cube_read_diagnostics.abstain_count >= 5) printf("NO CUBE\n");
+    for (unsigned cell = 0; cell < 9; ++cell) {
+        printf("HSV %u %.2f %.3f %.3f std=%.2f hue_distance=%.2f\n", cell,
+               (double)cube_read_diagnostics.hsv[cell][0],
+               (double)cube_read_diagnostics.hsv[cell][1],
+               (double)cube_read_diagnostics.hsv[cell][2],
+               (double)cube_read_diagnostics.stddev[cell],
+               (double)cube_read_diagnostics.hue_distance[cell]);
+    }
     /* Keep the full-panel source coherent for the display/DAVE2D reader. */
     SCB_CleanDCache_by_Addr((uint32_t*)preview_image, sizeof preview_image);
 }
