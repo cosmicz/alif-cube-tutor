@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <math.h>
 #include <stdio.h>
 #include "cube_camera_mapping.h"
 
@@ -25,5 +26,13 @@ int main(void)
     for (unsigned y = 0; y < 4; ++y)
         for (unsigned x = 0; x < 8; ++x)
             assert(cube_camera_source_index(8, 6, 8, 4, x, y) == crop_expected[y][x]);
-    puts("PASS clockwise camera + central landscape crop + exactly one mirror");
+    /* An off-centre model rect maps through the same rotate/crop/mirror
+     * transform: source x/y become logical y/x respectively. */
+    cube_camera_point first = cube_camera_model_to_preview(480, 480, 800, 480,
+                                                             192, 192, 48, 24);
+    cube_camera_point last = cube_camera_model_to_preview(480, 480, 800, 480,
+                                                            192, 192, 108, 54);
+    assert(fabsf(first.x - 100) < 0.01f && fabsf(first.y - 40) < 0.01f);
+    assert(fabsf(last.x - 225) < 0.01f && fabsf(last.y - 290) < 0.01f);
+    puts("PASS clockwise camera + crop/mirror + off-centre model-to-preview box");
 }

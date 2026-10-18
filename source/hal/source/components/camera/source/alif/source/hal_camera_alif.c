@@ -335,8 +335,10 @@ bool hal_camera_cube_read_selected_roi(const uint8_t* rgb, uint32_t frame_width,
      * RGB model input becomes BGR because cube_preview samples LVGL order. */
     for (uint32_t y = 0; y < 240; ++y) {
         for (uint32_t x = 0; x < 240; ++x) {
+            /* UI columns follow model rows and UI rows follow model columns,
+             * matching the clockwise-camera landscape preview transform. */
             const uint8_t* source = rgb + cube_roi_source_index(
-                frame_width, x0, y0, width, height, x, y) * RGB_BYTES;
+                frame_width, x0, y0, width, height, y, x) * RGB_BYTES;
             uint8_t* destination = cube_face_roi_tile + (y * 240 + x) * RGB_BYTES;
             destination[0] = source[2];
             destination[1] = source[1];

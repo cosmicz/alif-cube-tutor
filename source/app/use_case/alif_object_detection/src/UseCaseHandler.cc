@@ -54,6 +54,7 @@
 #include "lvgl.h"
 
 #include "cube_display_geometry.h"
+#include "cube_camera_mapping.h"
 #define PREVIEW_X CUBE_PREVIEW_WIDTH
 #define PREVIEW_Y CUBE_PREVIEW_HEIGHT
 
@@ -462,32 +463,26 @@ using namespace arm::app::object_detection;
         lv_obj_t *frame = ScreenLayoutImageHolderObject();
         const float holderWidth   = (float)lv_obj_get_content_width(frame);
         const float holderHeight  = (float)lv_obj_get_content_height(frame);
-        const float modelWidth    = (float)CIMAGE_Y * imgInputCols / imgInputRows;
-        const float modelHeight   = (float)CIMAGE_Y;
-        const float previewWidth  = CIMAGE_X * PREVIEW_Y > CIMAGE_Y * PREVIEW_X
-                                        ? (float)(CIMAGE_Y * PREVIEW_X / PREVIEW_Y)
-                                        : (float)CIMAGE_X;
-        const float previewHeight = CIMAGE_X * PREVIEW_Y > CIMAGE_Y * PREVIEW_X
-                                        ? (float)CIMAGE_Y
-                                        : (float)(CIMAGE_X * PREVIEW_Y / PREVIEW_X);
-        const float xScale        = holderWidth * modelWidth / (previewWidth * imgInputCols);
-        const float yScale        = holderHeight * modelHeight / (previewHeight * imgInputRows);
-        const float xOffset       = (previewWidth - modelWidth) * holderWidth / (2 * previewWidth);
-        const float yOffset = (previewHeight - modelHeight) * holderHeight / (2 * previewHeight);
 
         DeleteBoxes(frame);
 
         for (const auto& result: results) {
-#ifdef ALIF_CAMERA_APPKIT
-            const float left = xOffset + result.m_x0 * xScale;
-#else
-            const float left = holderWidth - xOffset - (result.m_x0 + result.m_w) * xScale;
-#endif
+            const auto first = cube_camera_model_to_preview(
+                CIMAGE_X, CIMAGE_Y, PREVIEW_X, PREVIEW_Y, imgInputCols,
+                imgInputRows, result.m_x0, result.m_y0);
+            const auto last = cube_camera_model_to_preview(
+                CIMAGE_X, CIMAGE_Y, PREVIEW_X, PREVIEW_Y, imgInputCols,
+                imgInputRows, result.m_x0 + result.m_w, result.m_y0 + result.m_h);
+            const float left = std::max(0.0f, std::min(first.x, last.x));
+            const float top = std::max(0.0f, std::min(first.y, last.y));
+            const float right = std::min((float)PREVIEW_X, std::max(first.x, last.x));
+            const float bottom = std::min((float)PREVIEW_Y, std::max(first.y, last.y));
+            if (right <= left || bottom <= top) continue;
             CreateBox(frame,
-                      floor(left),
-                      floor(yOffset + result.m_y0 * yScale),
-                      ceil(result.m_w * xScale),
-                      ceil(result.m_h * yScale));
+                      floor(left * holderWidth / PREVIEW_X),
+                      floor(top * holderHeight / PREVIEW_Y),
+                      ceil((right - left) * holderWidth / PREVIEW_X),
+                      ceil((bottom - top) * holderHeight / PREVIEW_Y));
         }
     }
 
