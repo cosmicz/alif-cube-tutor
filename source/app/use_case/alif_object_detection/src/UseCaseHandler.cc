@@ -263,10 +263,16 @@ using namespace arm::app::object_detection;
             return false;
         }
         constexpr float normalizer = 1.0f / 255.0f;
+        const auto savedWhiteBalance = [](uint8_t sample, float gain) {
+            return std::clamp(static_cast<float>(sample) * gain, 0.0f, 255.0f);
+        };
         for (size_t pixel = 0; pixel < pixels; ++pixel) {
-            input[pixel] = rgb[3 * pixel] * normalizer;
-            input[pixels + pixel] = rgb[3 * pixel + 1] * normalizer;
-            input[2 * pixels + pixel] = rgb[3 * pixel + 2] * normalizer;
+            /* Keep currImage raw: the CPU ROI reader uses that exact source
+             * and applies its locked calibration once.  Only the detector's
+             * float input receives the saved tablecal white balance. */
+            input[pixel] = savedWhiteBalance(rgb[3 * pixel], CUBE_TABLECAL_WHITE_GAIN_R) * normalizer;
+            input[pixels + pixel] = savedWhiteBalance(rgb[3 * pixel + 1], CUBE_TABLECAL_WHITE_GAIN_G) * normalizer;
+            input[2 * pixels + pixel] = savedWhiteBalance(rgb[3 * pixel + 2], CUBE_TABLECAL_WHITE_GAIN_B) * normalizer;
         }
         return true;
     }

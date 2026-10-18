@@ -25,6 +25,14 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 
+/* Saved tablecal white gains, derived from the accepted profile's white
+ * reference.  They are deliberately applied only to display/model views;
+ * the CPU reader continues to receive raw camera RGB and owns its existing
+ * calibration correction. */
+#define CUBE_TABLECAL_WHITE_GAIN_R 6.03101015f
+#define CUBE_TABLECAL_WHITE_GAIN_G 4.33846188f
+#define CUBE_TABLECAL_WHITE_GAIN_B 5.17589474f
+
 /**< Camera device's operating modes */
 typedef enum hal_camera_mode_ {
     HAL_CAMERA_MODE_SINGLE_FRAME = 0,

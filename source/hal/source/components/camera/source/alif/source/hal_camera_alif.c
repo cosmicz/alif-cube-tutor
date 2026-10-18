@@ -119,6 +119,25 @@ static uint8_t preview_image[CAMERA_PREVIEW_WIDTH * CAMERA_PREVIEW_HEIGHT * RGB_
 static uint8_t cube_face_roi_tile[240 * 240 * RGB_BYTES]
     __attribute__((aligned(32), section(".bss.large_ram")));
 
+static uint8_t cube_apply_saved_white_gain(uint8_t sample, float gain)
+{
+    const float balanced = (float)sample * gain;
+    return (uint8_t)(balanced >= 255.0f ? 255.0f : balanced);
+}
+
+static void cube_white_balance_preview(void)
+{
+    /* preview_image is a dedicated BGR display buffer.  Applying the saved
+     * profile here makes the LCD preview match the detector while retaining
+     * raw camera RGB for the CPU ROI reader and its own one-pass correction. */
+    for (uint32_t pixel = 0; pixel < CAMERA_PREVIEW_WIDTH * CAMERA_PREVIEW_HEIGHT; ++pixel) {
+        uint8_t* bgr = preview_image + pixel * RGB_BYTES;
+        bgr[0] = cube_apply_saved_white_gain(bgr[0], CUBE_TABLECAL_WHITE_GAIN_B);
+        bgr[1] = cube_apply_saved_white_gain(bgr[1], CUBE_TABLECAL_WHITE_GAIN_G);
+        bgr[2] = cube_apply_saved_white_gain(bgr[2], CUBE_TABLECAL_WHITE_GAIN_R);
+    }
+}
+
 
 #if !defined(RTE_Drivers_CPI)
 #define USE_FAKE_CAMERA 1
@@ -349,6 +368,9 @@ void camera_update_preview(const uint8_t* image,
                                    CAMERA_PREVIEW_HEIGHT, cube_face_letters,
                                    &cube_read_diagnostics, now_ms, request);
     }
+    /* CAL reads the unmodified preview above, preserving its accepted button
+     * and white-cross state machine.  WB is display-only and occurs after it. */
+    cube_white_balance_preview();
     /* Keep the full-panel source coherent for the display/DAVE2D reader. */
     SCB_CleanDCache_by_Addr((uint32_t*)preview_image, sizeof preview_image);
 }
