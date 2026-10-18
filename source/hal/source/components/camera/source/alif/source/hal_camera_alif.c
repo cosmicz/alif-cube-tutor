@@ -38,6 +38,47 @@ cube_diagnostics cube_read_diagnostics = {.mode = 1};
 volatile uint32_t cube_calibration_request;
 static char cube_status_text[160];
 
+/* Captured from private/table-calibration-20261018.LK7u1g frame 2907.  This
+ * named compile-time startup profile imports accepted white balance and logo
+ * references without reading live RAM.  It applies before the camera preview
+ * and YOLO ROI bridge; button request 2 still clears it and request 1 still
+ * captures/relocks a normal white-cross calibration. */
+typedef struct {
+    const char *name;
+    float white_ref[3];
+    float logo_ref_raw[3];
+    float logo_ref_rgb[3];
+    float logo_ref_hsv[3];
+} cube_startup_profile;
+
+static const cube_startup_profile cube_startup_profile_tablecal = {
+    .name = "tablecal",
+    .white_ref = {38.9652786f, 54.1666641f, 45.4027786f},
+    .logo_ref_raw = {37.8055573f, 52.8611145f, 43.8055573f},
+    .logo_ref_rgb = {228.0057068f, 229.3359375f, 226.7329559f},
+    .logo_ref_hsv = {90.6625137f, 0.0113501f, 0.8993566f},
+};
+
+static void cube_import_startup_profile(void)
+{
+    static uint32_t imported;
+    if (imported) return;
+    const cube_startup_profile *profile = &cube_startup_profile_tablecal;
+    for (unsigned c = 0; c < 3; ++c) {
+        cube_read_diagnostics.white_ref[c] = profile->white_ref[c];
+        cube_read_diagnostics.logo_ref_raw[c] = profile->logo_ref_raw[c];
+        cube_read_diagnostics.logo_ref_rgb[c] = profile->logo_ref_rgb[c];
+        cube_read_diagnostics.logo_ref_hsv[c] = profile->logo_ref_hsv[c];
+    }
+    cube_read_diagnostics.mode = 1;
+    cube_read_diagnostics.white_valid = 1;
+    cube_read_diagnostics.logo_ref_valid = 1;
+    imported = 1;
+    printf("CUBE profile=%s WB %.2f %.2f %.2f\n", profile->name,
+           (double)profile->white_ref[0], (double)profile->white_ref[1],
+           (double)profile->white_ref[2]);
+}
+
 const char *cube_calibration_status(void)
 {
     if (!cube_read_diagnostics.mode) {
@@ -144,6 +185,7 @@ static void hal_camera_reset(void)
 bool hal_camera_init(void)
 {
     hal_camera_reset();
+    cube_import_startup_profile();
     info("Initialising camera interface: %s\n", s_cam_dev.name);
 #ifndef USE_FAKE_CAMERA
     int32_t err = 0;
