@@ -142,10 +142,10 @@ endif()
 # maximum burst length for all NPU configurations.
 if (ETHOS_U_NPU_ID STREQUAL U55 OR ETHOS_U_NPU_ID STREQUAL U65)
     target_compile_definitions(ethosu_core_driver PRIVATE
-        AXI_LIMIT0_MAX_BEATS_BYTES=1
-        AXI_LIMIT1_MAX_BEATS_BYTES=1
-        AXI_LIMIT2_MAX_BEATS_BYTES=1
-        AXI_LIMIT3_MAX_BEATS_BYTES=1) # 0 = 64 byte burst & 1 = 128 byte burst
+        AXI_LIMIT0_MAX_BEATS_BYTES=0
+        AXI_LIMIT1_MAX_BEATS_BYTES=0
+        AXI_LIMIT2_MAX_BEATS_BYTES=0
+        AXI_LIMIT3_MAX_BEATS_BYTES=0) # 0 = 64 byte burst & 1 = 128 byte burst
     # Use "normal" (modifiable) transactions, improving interconnect transit
     target_compile_definitions(ethosu_core_driver PRIVATE
         AXI_LIMIT0_MEM_TYPE=2

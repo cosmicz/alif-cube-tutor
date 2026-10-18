@@ -28,6 +28,8 @@
  */
 #include "UseCaseHandler.hpp"
 #include "CubeFaceYoloV8.hpp"
+#include "CubeFaceMultiSelect.hpp"
+#include "cube_cross_hint.h"
 #include "UseCaseCommonUtils.hpp"
 #include "mlek/fwk/tflm/YoloFastestModel.hpp"
 #include "mlek/log/log_macros.h"
@@ -208,33 +210,33 @@ using namespace arm::app::object_detection;
                              : (static_cast<float>(int8Data[index]) - quant.offset) * quant.scale;
         };
 
-        const size_t best = object_detection::SelectLargestFaceCandidate(
-                valueAt, candidates, confidenceThreshold);
-        if (best == candidates) {
-            return true;
+        /* One to three faces per image: confidence > threshold, no single stickers, NMS, largest first. */
+        size_t selected[3];
+        const size_t faces = object_detection::SelectCubeFaces(valueAt, candidates, confidenceThreshold,
+                                                               0.04f, 0.5f, 3, selected);
+        for (size_t face = 0; face < faces; ++face) {
+            const size_t best = selected[face];
+            const auto dequantize = [&](size_t channel) {
+                return valueAt(channel * candidates + best);
+            };
+            const float centreX = dequantize(0) * inputImgCols;
+            const float centreY = dequantize(1) * inputImgRows;
+            const float width = std::max(0.0f, dequantize(2) * inputImgCols);
+            const float height = std::max(0.0f, dequantize(3) * inputImgRows);
+            const float x0 = std::clamp(centreX - width / 2.0f, 0.0f,
+                                        static_cast<float>(inputImgCols));
+            const float y0 = std::clamp(centreY - height / 2.0f, 0.0f,
+                                        static_cast<float>(inputImgRows));
+            const float x1 = std::clamp(centreX + width / 2.0f, 0.0f,
+                                        static_cast<float>(inputImgCols));
+            const float y1 = std::clamp(centreY + height / 2.0f, 0.0f,
+                                        static_cast<float>(inputImgRows));
+            if (x1 <= x0 || y1 <= y0) {
+                continue;
+            }
+            results.push_back({valueAt(4 * candidates + best), static_cast<int>(x0), static_cast<int>(y0),
+                               static_cast<int>(x1 - x0), static_cast<int>(y1 - y0)});
         }
-
-        const auto dequantize = [&](size_t channel) {
-            return valueAt(channel * candidates + best);
-        };
-        const float centreX = dequantize(0) * inputImgCols;
-        const float centreY = dequantize(1) * inputImgRows;
-        const float width = std::max(0.0f, dequantize(2) * inputImgCols);
-        const float height = std::max(0.0f, dequantize(3) * inputImgRows);
-        const float x0 = std::clamp(centreX - width / 2.0f, 0.0f,
-                                    static_cast<float>(inputImgCols));
-        const float y0 = std::clamp(centreY - height / 2.0f, 0.0f,
-                                    static_cast<float>(inputImgRows));
-        const float x1 = std::clamp(centreX + width / 2.0f, 0.0f,
-                                    static_cast<float>(inputImgCols));
-        const float y1 = std::clamp(centreY + height / 2.0f, 0.0f,
-                                    static_cast<float>(inputImgRows));
-        if (x1 <= x0 || y1 <= y0) {
-            return true;
-        }
-
-        results.push_back({valueAt(4 * candidates + best), static_cast<int>(x0), static_cast<int>(y0),
-                           static_cast<int>(x1 - x0), static_cast<int>(y1 - y0)});
         return true;
     }
 
@@ -284,14 +286,32 @@ using namespace arm::app::object_detection;
             else lv_label_set_text_fmt(cubeStatusLabel, "CPU CAL: %s", hal_camera_cube_status());
             return;
         }
-        const auto& face = results.front();
-        char letters[10]{};
-        if (!hal_camera_cube_read_selected_roi(rgb, width, height, face.m_x0,
-                                               face.m_y0, face.m_w, face.m_h, letters)) {
+        /* Up to three faces, largest first; the tutoring cue follows the largest face read. */
+        char label[3 * 9 + 2 * 3 + 1] = {};
+        char first[10] = {};
+        size_t shown = 0;
+        for (size_t i = 0; i < results.size() && shown < 3; ++i) {
+            const auto& face = results[i];
+            char letters[10]{};
+            if (!hal_camera_cube_read_selected_roi(rgb, width, height, face.m_x0,
+                                                   face.m_y0, face.m_w, face.m_h, letters)) {
+                continue;
+            }
+            if (shown == 0) {
+                std::memcpy(first, letters, sizeof first);
+            } else {
+                std::strcat(label, " | ");
+            }
+            std::strcat(label, letters);
+            ++shown;
+        }
+        if (shown == 0) {
             lv_label_set_text_fmt(cubeStatusLabel, "CPU CAL: %s", hal_camera_cube_status());
             return;
         }
-        lv_label_set_text_fmt(cubeStatusLabel, "CPU CAL: %s", letters);
+        char hint[CUBE_CROSS_HINT_LEN];
+        cube_cross_hint(first, hint, sizeof hint);
+        lv_label_set_text_fmt(cubeStatusLabel, "CPU CAL: %s\n%s", label, hint);
     }
 
     /* Object detection inference handler. */
