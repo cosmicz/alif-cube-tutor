@@ -115,9 +115,10 @@ static inline unsigned cube_hsv_colour(const float rgb[3], float hsv[3])
     hsv[0] = hue;
     hsv[1] = high > 0 ? delta / high : 0;
     hsv[2] = high;
-    /* Captured neutral whites have S~0..0.03; the former 0.35 threshold
-     * swallowed confirmed red at H346/S0.349. Preserve chromatic hue evidence. */
-    if (hsv[1] < 0.15f && high > 0.55f) return 0;
+    /* Saved white references are S~0..0.03.  The table capture contains a
+     * confirmed green at H106/S0.115/V0.668, so a 0.15 white cutoff loses
+     * real chroma.  Keep the neutral region narrow and use its hue evidence. */
+    if (hsv[1] < 0.10f && high > 0.55f) return 0;
     if (hue >= 340 || hue < 20) return 2;
     if (hue < 45) return 3;
     if (hue < 75) return 1;
@@ -259,8 +260,18 @@ static inline void cube_preview_read_and_draw(uint8_t *bgr, unsigned width,
             }
         }
         diagnostics->hue_distance[cell] = distance;
+        /* The observed calibrated blue and green bands are broader than the
+         * red/yellow bands: H262 blue is valid but 40 degrees from the old
+         * blue prototype, and H107 green is 27 degrees from its prototype.
+         * Match the accepted hue bands instead of contradicting them with a
+         * single global distance gate.  Keep the lower cyan edge below H210
+         * strict: the existing H193/S0.257/V0.498 regression remains
+         * deliberately abstained. */
+        const float max_hue_distance = classes[cell] == 4
+            ? (hsv[0] >= 210.0f ? 50.0f : 20.0f)
+            : (classes[cell] == 5 ? 60.0f : 20.0f);
         if ((hsv[1] < 0.2f && hsv[2] < 0.55f) ||
-            diagnostics->stddev[cell] > 28 || distance > 20) {
+            diagnostics->stddev[cell] > 28 || distance > max_hue_distance) {
             classes[cell] = 6;
             diagnostics->abstain_mask |= 1u << cell;
             ++diagnostics->abstain_count;
