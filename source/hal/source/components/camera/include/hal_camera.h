@@ -100,6 +100,7 @@ bool hal_camera_cube_read_selected_roi(const uint8_t* rgb, uint32_t frame_width,
 
 /* Human-readable CAL/READ state maintained by the accepted any-button path. */
 const char* hal_camera_cube_status(void);
+bool hal_camera_cube_is_read_mode(void);
 
 /**
  * @brief  Stops the camera device.

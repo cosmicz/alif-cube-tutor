@@ -316,6 +316,11 @@ const char* hal_camera_cube_status(void)
     return cube_calibration_status();
 }
 
+bool hal_camera_cube_is_read_mode(void)
+{
+    return cube_read_diagnostics.mode != 0;
+}
+
 bool hal_camera_cube_read_selected_roi(const uint8_t* rgb, uint32_t frame_width,
                                        uint32_t frame_height, int32_t x0,
                                        int32_t y0, int32_t width, int32_t height,

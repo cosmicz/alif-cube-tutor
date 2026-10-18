@@ -274,9 +274,13 @@ using namespace arm::app::object_detection;
                                          int width, int height,
                                          const std::vector<object_detection::DetectionResult>& results)
     {
-        if (!cubeStatusLabel || !rgb || rgbBytes < static_cast<size_t>(width) * height * 3 ||
-            results.empty()) {
-            if (cubeStatusLabel) lv_label_set_text(cubeStatusLabel, "CPU CAL: no face");
+        if (!cubeStatusLabel || !rgb || rgbBytes < static_cast<size_t>(width) * height * 3) {
+            if (cubeStatusLabel) lv_label_set_text(cubeStatusLabel, "CPU CAL: camera unavailable");
+            return;
+        }
+        if (results.empty()) {
+            if (hal_camera_cube_is_read_mode()) lv_label_set_text(cubeStatusLabel, "CPU CAL: no face");
+            else lv_label_set_text_fmt(cubeStatusLabel, "CPU CAL: %s", hal_camera_cube_status());
             return;
         }
         const auto& face = results.front();
