@@ -14,7 +14,8 @@
 #include <string.h>
 
 #define CUBE_FACE_COUNT 6
-#define CUBE_MEMORY_LINE_LEN 96
+#define CUBE_MEMORY_LINE_LEN 112
+#define CUBE_MEMORY_STABLE_FRAMES 3   /* identical reads in a row before a face is remembered */
 
 /* Slot order follows the facelet model: U R F D L B = white orange blue yellow red green. */
 static const char CUBE_FACE_LETTERS[CUBE_FACE_COUNT + 1] = "WOBYRG";
@@ -22,6 +23,8 @@ static const char CUBE_FACE_LETTERS[CUBE_FACE_COUNT + 1] = "WOBYRG";
 typedef struct {
     char faces[CUBE_FACE_COUNT][10];  /* nine letters + NUL per slot, '\0' first byte when unseen */
     unsigned seen;                    /* bit i set when slot i holds a read */
+    char pending[10];                 /* the last complete read, awaiting confirmation */
+    int pending_count;                /* how many times in a row pending was read */
 } cube_face_memory;
 
 static inline int cube_face_slot(char centre)
@@ -32,13 +35,23 @@ static inline int cube_face_slot(char centre)
 
 static inline void cube_face_memory_reset(cube_face_memory *m) { memset(m, 0, sizeof *m); }
 
-/* Store a read whose centre is a face colour and whose nine cells are all face colours.  Returns the
- * slot updated, or -1 when the read is incomplete (a partial read never overwrites a good one). */
+/* Offer a read.  A read is complete when its centre and all nine cells are face colours; it is
+ * remembered only after CUBE_MEMORY_STABLE_FRAMES identical complete reads in a row, so a single
+ * flickered frame (a misread centre or cell) cannot overwrite a good face.  Returns the slot that
+ * was (re)confirmed this frame, or -1 when nothing was stored. */
 static inline int cube_face_memory_update(cube_face_memory *m, const char letters[9])
 {
     const int slot = cube_face_slot(letters[4]);
-    if (slot < 0) return -1;
-    for (int i = 0; i < 9; ++i) if (cube_face_slot(letters[i]) < 0) return -1;
+    if (slot < 0) { m->pending_count = 0; return -1; }
+    for (int i = 0; i < 9; ++i) if (cube_face_slot(letters[i]) < 0) { m->pending_count = 0; return -1; }
+    if (m->pending_count > 0 && memcmp(m->pending, letters, 9) == 0) {
+        ++m->pending_count;
+    } else {
+        memcpy(m->pending, letters, 9);
+        m->pending[9] = '\0';
+        m->pending_count = 1;
+    }
+    if (m->pending_count < CUBE_MEMORY_STABLE_FRAMES) return -1;
     memcpy(m->faces[slot], letters, 9);
     m->faces[slot][9] = '\0';
     m->seen |= 1u << slot;
@@ -85,19 +98,19 @@ static inline int cube_face_memory_line(const cube_face_memory *m, char *out, si
         return -1;
     }
     int solved = 0;
-    char missing[32] = "";
+    char missing[64] = "";
     size_t n = 0;
     for (int s = 0; s < 4; ++s) {
         const cube_cross_slot c = CUBE_CROSS_SLOTS[s];
         const char side_centre = CUBE_FACE_LETTERS[c.side];
-        const int home = m->faces[0][c.u_cell] == 'W' && m->faces[c.side][c.side_cell] == side_centre;
-        if (home) { ++solved; continue; }
-        if (n) missing[n++] = ' ';
-        missing[n++] = side_centre;
+        const char up = m->faces[0][c.u_cell], side = m->faces[c.side][c.side_cell];
+        if (up == 'W' && side == side_centre) { ++solved; continue; }
+        /* Name the two stickers checked, so a misread face is visible: e.g. "O(W/R)" = white face
+         * shows W, orange face top edge shows R. */
+        n += (size_t)snprintf(missing + n, sizeof missing - n, "%s%c(%c/%c)", n ? " " : "", side_centre, up, side);
     }
-    missing[n] = '\0';
     if (solved == 4) snprintf(out, out_len, "WHITE CROSS 4/4: ALL FOUR EDGES HOME");
-    else snprintf(out, out_len, "WHITE CROSS %d/4: EDGE%s NOT HOME BY %s", solved, solved == 3 ? "" : "S", missing);
+    else snprintf(out, out_len, "WHITE CROSS %d/4: NOT HOME %s", solved, missing);
     return solved;
 }
 #endif

@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360" role="img" aria-labelledby="title desc">
+  <title id="title">Cube Tutor</title>
+  <desc id="desc">See the cube. Teach the human. On-device vision on Alif Ensemble E8.</desc>
+  <rect width="1200" height="360" rx="20" fill="#122a36"/>
+  <g font-family="Helvetica Neue,Arial,sans-serif">
+    <text x="64" y="74" fill="#8eb7b9" font-size="17" letter-spacing="4">A PHYSICAL PUZZLE. AN ON-DEVICE TUTOR.</text>
+    <text x="58" y="176" fill="#fffaf0" font-size="86" font-weight="700" letter-spacing="-3">Cube Tutor</text>
+    <text x="64" y="235" fill="#e5e5d8" font-size="29">See the cube. Teach the human.</text>
+    <text x="64" y="305" fill="#8eb7b9" font-size="18">ALIF ENSEMBLE E8 / CORTEX-M55 + ETHOS-U85</text>
+  </g>
+  <g transform="translate(890 69)">
+    <rect width="222" height="222" rx="14" fill="#081a23"/>
+    <g stroke="#081a23" stroke-width="8">
+      <rect x="8" y="8" width="68" height="68" rx="10" fill="#f3cc4b"/>
+      <rect x="77" y="8" width="68" height="68" rx="10" fill="#ec7546"/>
+      <rect x="146" y="8" width="68" height="68" rx="10" fill="#f8f5e9"/>
+      <rect x="8" y="77" width="68" height="68" rx="10" fill="#4aab7f"/>
+      <rect x="77" y="77" width="68" height="68" rx="10" fill="#ec7546"/>
+      <rect x="146" y="77" width="68" height="68" rx="10" fill="#5589d0"/>
+      <rect x="8" y="146" width="68" height="68" rx="10" fill="#df5353"/>
+      <rect x="77" y="146" width="68" height="68" rx="10" fill="#f8f5e9"/>
+      <rect x="146" y="146" width="68" height="68" rx="10" fill="#f3cc4b"/>
+    </g>
+  </g>
+</svg>
