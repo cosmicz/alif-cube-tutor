@@ -31,6 +31,7 @@
 #include "CubeFaceMultiSelect.hpp"
 #include "cube_cross_hint.h"
 #include "cube_face_memory.h"
+#include "cube_cross_planner.h"
 #include "UseCaseCommonUtils.hpp"
 #include "mlek/fwk/tflm/YoloFastestModel.hpp"
 #include "mlek/log/log_macros.h"
@@ -67,6 +68,8 @@ bool firstCameraFrameReported = false;
 lv_obj_t *cubeStatusLabel = nullptr;
 lv_obj_t *cubeMemoryLabel = nullptr;   /* top line: faces remembered, then white-cross progress */
 cube_face_memory faceMemory{};
+char plannedFaces[CUBE_FACE_COUNT][10] = {};   /* the faces the last plan was computed from */
+char planLine[CUBE_MEMORY_LINE_LEN] = "";
 
 };
 
@@ -336,7 +339,13 @@ using namespace arm::app::object_detection;
         if (cube_face_memory_update(&faceMemory, first) >= 0 && cubeMemoryLabel) {
             char memory[CUBE_MEMORY_LINE_LEN];
             cube_face_memory_line(&faceMemory, memory, sizeof memory);
-            lv_label_set_text(cubeMemoryLabel, memory);
+            /* Replan only when a remembered face actually changed: the search can take a while. */
+            if (memcmp(plannedFaces, faceMemory.faces, sizeof plannedFaces) != 0) {
+                memcpy(plannedFaces, faceMemory.faces, sizeof plannedFaces);
+                cube_plan_line(&faceMemory, planLine, sizeof planLine);
+            }
+            if (faceMemory.seen == 0x3Fu) lv_label_set_text_fmt(cubeMemoryLabel, "%s\n%s", memory, planLine);
+            else lv_label_set_text(cubeMemoryLabel, memory);
         }
     }
 
